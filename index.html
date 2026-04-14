@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="theme-color" content="#1e3a8a"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="SIPAMDAL"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <link rel="manifest" href="./manifest.json"/>
+  <link rel="apple-touch-icon" href="./icon-192.png"/>
+  <title>SIPAMDAL – BBPKA II Jatinangor</title>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    body{margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif;background:#eef3fb;overscroll-behavior:none;}
+    #root{min-height:100vh;}
+    input,select,textarea,button{font-family:inherit;}
+    ::-webkit-scrollbar{width:4px;height:4px;}
+    ::-webkit-scrollbar-track{background:#f1f5f9;}
+    ::-webkit-scrollbar-thumb{background:#bfdbfe;border-radius:4px;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── DATA ─────────────────────────────────────────────────────────────────────
+const REGU = {
+  1: ["Dudung", "Somantri", "Dadang", "Caca", "Endri"],
+  2: ["Asep", "Riki", "Iwan 89", "Gustaf", "Endang"],
+  3: ["Tatang", "Isnanta", "Iwan 92", "Dudi", "Rukman"],
+};
+
+const JADWAL_START = new Date("2025-04-14T00:00:00");
+function getReguHari(date) {
+  const d = new Date(date); d.setHours(0,0,0,0);
+  const s = new Date(JADWAL_START); s.setHours(0,0,0,0);
+  const diff = Math.round((d - s) / 86400000);
+  const urut = [3, 1, 2];
+  return urut[((diff % 3) + 3) % 3];
+}
+
+const POS_LIST = ["Pos Utama", "Pos Asrama", "Pos Guest House", "Lobby Gedung Utama"];
+const POS_CAP = { "Pos Utama": 2, "Pos Asrama": 1, "Pos Guest House": 1, "Lobby Gedung Utama": 1 };
+const POS_COL = { "Pos Utama": "#1d4ed8", "Pos Asrama": "#0891b2", "Pos Guest House": "#7c3aed", "Lobby Gedung Utama": "#059669" };
+
+const PATROL_AREAS = {
+  "Pos Asrama": ["Gedung Asrama 2","Ruang Makan 2","Klinik","Gedung Kelas E","Gedung Kelas A","Ruang Makan 1"],
+  "Lobby Gedung Utama": ["Gedung Utama","Gedung WI","Aula","Gedung Sarpras","Gedung Kepegawaian"],
+  "Pos Utama": ["Gedung Kantin","Masjid"],
+  "Pos Guest House": ["Guest House 1","Guest House 2","Guest House 3","Guest House 4","Gedung GOR"],
+};
+
+const QR_PREFIX = "BBPKA2-PAMDAL-";
+const encQR = (a) => QR_PREFIX + a.replace(/ /g,"_");
+const decQR = (v) => v && v.startsWith(QR_PREFIX) ? v.replace(QR_PREFIX,"").replace(/_/g," ") : null;
+const ALL_AREAS = Object.values(PATROL_AREAS).flat();
+
+const ROLLING_TIMES = ["06:00","12:00","18:00","00:00","03:00"];
+const INC_CAT = ["Rendah","Sedang","Penting"];
+const CAT_COL = { Rendah:"#16a34a", Sedang:"#d97706", Penting:"#dc2626" };
+const CAT_BG  = { Rendah:"#f0fdf4", Sedang:"#fffbeb", Penting:"#fef2f2" };
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function useLS(key, init) {
+  const [v, sv] = useState(() => { try { const s=localStorage.getItem(key); return s?JSON.parse(s):init; } catch{return init;} });
+  const set = (x) => { sv(x); try{localStorage.setItem(key,JSON.stringify(x));}catch{} };
+  return [v, set];
+}
+const fmtDT = (d) => new Date(d).toLocaleString("id-ID",{dateStyle:"short",timeStyle:"short"});
+const fmtT  = (d) => new Date(d).toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"});
+const fmtDate = (d) => new Date(d).toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+const fmtDS = (d) => new Date(d).toLocaleDateString("id-ID",{day:"numeric",month:"short"});
+const getShift = (d=new Date()) => { const h=d.getHours(); if(h>=8&&h<12)return{l:"Pagi",t:"08:00-12:00"}; if(h>=12&&h<18)return{l:"Siang",t:"12:00-18:00"}; if(h>=18)return{l:"Petang",t:"18:00-00:00"}; return{l:"Malam",t:"00:00-08:00"}; };
+const getPos = (area) => Object.entries(PATROL_AREAS).find(([,as])=>as.includes(area))?.[0];
+
+// ─── ICONS ────────────────────────────────────────────────────────────────────
+const IC = ({n,s=18,c="currentColor"}) => ({
+  shield:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+  home:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+  cal:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  alert:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  pkg:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
+  ppl:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  file:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
+  rot:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
+  qr:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="5" y="5" width="3" height="3"/><rect x="16" y="5" width="3" height="3"/><rect x="16" y="16" width="3" height="3"/><rect x="5" y="16" width="3" height="3"/></svg>,
+  cam:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>,
+  plus:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  ok:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>,
+  x:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  arr:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>,
+  print:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
+  pos:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>,
+  menu:<svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
+}[n] || null);
+
+// ─── QR SVG ───────────────────────────────────────────────────────────────────
+function QRSvg({ value, size=120 }) {
+  const h = value.split("").reduce((a,c)=>((a<<5)-a+c.charCodeAt(0))|0, 0);
+  const N=21, cell=size/N, grid=[];
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++) {
+    const finder=(r<7&&c<7)||(r<7&&c>=14)||(r>=14&&c<7);
+    const inner=(r>=2&&r<=4&&c>=2&&c<=4)||(r>=2&&r<=4&&c>=16&&c<=18)||(r>=16&&r<=18&&c>=2&&c<=4);
+    const timing=(r===6||c===6)&&!finder;
+    let filled=finder||inner;
+    if(timing) filled=(r+c)%2===0;
+    if(!finder&&!timing) filled=(Math.abs((h*(r*N+c+7))|0)%255)>120;
+    grid.push({r,c,filled});
+  }
+  return (
+    <svg width={size} height={size} style={{background:"#fff",borderRadius:8,display:"block"}}>
+      {grid.map(({r,c,filled})=>filled&&<rect key={`${r}-${c}`} x={c*cell+.5} y={r*cell+.5} width={cell-.5} height={cell-.5} fill="#1e3a5f" rx=".5"/>)}
+    </svg>
+  );
+}
+
+// ─── UI PRIMITIVES ────────────────────────────────────────────────────────────
+function Modal({open,onClose,title,children,wide,noPad}) {
+  if(!open) return null;
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(15,30,70,.5)",backdropFilter:"blur(6px)",padding:12}}>
+      <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:wide?720:500,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(30,58,138,.18)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 22px",borderBottom:"1.5px solid #e0eaf8"}}>
+          <h3 style={{margin:0,fontSize:15,fontWeight:800,color:"#1e3a8a"}}>{title}</h3>
+          <button onClick={onClose} style={{background:"#f0f5ff",border:"none",borderRadius:8,cursor:"pointer",padding:6,display:"flex"}}><IC n="x" s={17} c="#3b82f6"/></button>
+        </div>
+        <div style={noPad?{}:{padding:"18px 22px 22px"}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+const Bdg = ({text,color="#1d4ed8"}) => <span style={{background:color+"15",color,border:`1px solid ${color}30`,borderRadius:6,padding:"2px 9px",fontSize:11,fontWeight:700,letterSpacing:.3,whiteSpace:"nowrap"}}>{text}</span>;
+
+function Inp({label,value,onChange,type="text",placeholder,as,children,half}) {
+  const base={background:"#f7faff",border:"1.5px solid #d0e0f8",borderRadius:10,color:"#1e3a8a",padding:"9px 12px",fontSize:13.5,width:"100%",outline:"none",boxSizing:"border-box",fontFamily:"inherit",transition:"border .15s"};
+  return (
+    <div style={{marginBottom:11,flex:half?1:undefined}}>
+      {label&&<label style={{display:"block",fontSize:11,color:"#3b82f6",marginBottom:4,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>{label}</label>}
+      {as==="select"?<select value={value} onChange={onChange} style={base}>{children}</select>
+       :as==="textarea"?<textarea value={value} onChange={onChange} placeholder={placeholder} style={{...base,minHeight:76,resize:"vertical"}}/>
+       :<input type={type} value={value} onChange={onChange} placeholder={placeholder} style={base}/>}
+    </div>
+  );
+}
+
+function Btn({children,onClick,color="#1d4ed8",size="md",variant="solid",disabled,full,sx}) {
+  const pad=size==="sm"?"5px 11px":size==="lg"?"12px 24px":"8px 17px";
+  const fs=size==="sm"?11.5:size==="lg"?13.5:13;
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      background:variant==="solid"?`linear-gradient(135deg,${color},${color}cc)`:"#fff",
+      border:`1.5px solid ${color}`,color:variant==="solid"?"#fff":color,
+      borderRadius:9,padding:pad,fontSize:fs,fontWeight:700,
+      cursor:disabled?"not-allowed":"pointer",opacity:disabled?.5:1,
+      transition:"all .15s",width:full?"100%":undefined,
+      display:"inline-flex",alignItems:"center",gap:5,
+      boxShadow:variant==="solid"?`0 2px 8px ${color}25`:"none",...sx
+    }}>{children}</button>
+  );
+}
+
+// ─── CAMERA QR SCANNER ────────────────────────────────────────────────────────
+function CamScanner({onScan,onClose}) {
+  const vRef=useRef(), cRef=useRef(), streamRef=useRef(), animRef=useRef();
+  const [err,setErr]=useState(null);
+  const [live,setLive]=useState(false);
+  const [hit,setHit]=useState(null);
+  const hasBD=typeof window!=="undefined"&&!!window.BarcodeDetector;
+
+  const stop=useCallback(()=>{
+    streamRef.current?.getTracks().forEach(t=>t.stop()); streamRef.current=null;
+    if(animRef.current) cancelAnimationFrame(animRef.current);
+    setLive(false);
+  },[]);
+
+  const scan=useCallback(()=>{
+    const v=vRef.current,c=cRef.current;
+    if(!v||!c||v.readyState<2){animRef.current=requestAnimationFrame(scan);return;}
+    const ctx=c.getContext("2d"); c.width=v.videoWidth; c.height=v.videoHeight; ctx.drawImage(v,0,0);
+    if(window.BarcodeDetector){
+      new window.BarcodeDetector({formats:["qr_code"]}).detect(c).then(bs=>{
+        if(bs.length){
+          const area=decQR(bs[0].rawValue)||ALL_AREAS.find(a=>bs[0].rawValue.includes(a));
+          if(area&&ALL_AREAS.includes(area)){setHit(area);stop();setTimeout(()=>onScan(area),400);return;}
+        }
+        animRef.current=requestAnimationFrame(scan);
+      }).catch(()=>{animRef.current=requestAnimationFrame(scan);});
+    } else { animRef.current=requestAnimationFrame(scan); }
+  },[onScan,stop]);
+
+  const start=async()=>{
+    setErr(null);
+    try{
+      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
+      streamRef.current=s; vRef.current.srcObject=s; await vRef.current.play(); setLive(true);
+    }catch(e){setErr("Kamera tidak dapat diakses. Pastikan izin kamera diberikan.");}
+  };
+
+  useEffect(()=>{ start(); return()=>stop(); },[]);
+  useEffect(()=>{ if(live&&vRef.current) vRef.current.onloadedmetadata=()=>{animRef.current=requestAnimationFrame(scan);}; },[live,scan]);
+
+  return (
+    <div>
+      <div style={{position:"relative",background:"#0f172a",minHeight:240,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+        <video ref={vRef} style={{width:"100%",maxHeight:260,objectFit:"cover",display:live?"block":"none"}} playsInline muted/>
+        <canvas ref={cRef} style={{display:"none"}}/>
+        {live&&(
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+            <div style={{width:190,height:190,border:"2.5px solid #3b82f6",borderRadius:14,boxShadow:"0 0 0 9999px rgba(0,0,0,.5)",position:"relative"}}>
+              <div style={{position:"absolute",top:"50%",left:0,right:0,height:2,background:"linear-gradient(90deg,transparent,#3b82f6,transparent)",animation:"sl 2s ease-in-out infinite"}}/>
+            </div>
+          </div>
+        )}
+        {hit&&<div style={{position:"absolute",bottom:12,left:"50%",transform:"translateX(-50%)",background:"#16a34a",color:"#fff",borderRadius:8,padding:"8px 18px",fontWeight:700,fontSize:14,whiteSpace:"nowrap"}}>✓ {hit}</div>}
+        {!live&&!hit&&<div style={{textAlign:"center",color:"#fff",padding:24}}><IC n="cam" s={44} c="#3b82f6"/><div style={{marginTop:10,fontSize:13}}>Memulai kamera...</div></div>}
+      </div>
+      <div style={{padding:"14px 18px 18px"}}>
+        {!hasBD&&live&&<div style={{background:"#fffbeb",border:"1px solid #fbbf24",borderRadius:9,padding:"9px 13px",marginBottom:10,fontSize:12.5,color:"#92400e"}}>⚠ Browser ini belum mendukung scan otomatis. Pilih gedung dari daftar.</div>}
+        {err&&<div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:9,padding:"9px 13px",marginBottom:10,fontSize:12.5,color:"#b91c1c"}}>{err}</div>}
+        <div style={{fontSize:11.5,fontWeight:700,color:"#3b82f6",marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>Atau pilih gedung manual:</div>
+        <div style={{maxHeight:210,overflowY:"auto",display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+          {Object.entries(PATROL_AREAS).map(([pos,areas])=>(
+            <div key={pos}>
+              <div style={{fontSize:10.5,color:"#9ca3af",fontWeight:700,padding:"3px 0 2px",textTransform:"uppercase",letterSpacing:.5}}>{pos}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>
+                {areas.map(a=>(
+                  <button key={a} onClick={()=>{stop();onScan(a);}} style={{background:"#f0f5ff",border:"1.5px solid #bfdbfe",borderRadius:7,color:"#1d4ed8",fontSize:12,fontWeight:600,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit"}}>{a}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {live?<Btn onClick={stop} color="#6b7280" variant="outline">Stop Kamera</Btn>:<Btn onClick={start} color="#1d4ed8"><IC n="cam" s={13}/> Aktifkan</Btn>}
+          <Btn onClick={()=>{stop();onClose();}} color="#6b7280" variant="outline">Tutup</Btn>
+        </div>
+      </div>
+      <style>{`@keyframes sl{0%,100%{transform:translateY(-70px)}50%{transform:translateY(70px)}}`}</style>
+    </div>
+  );
+}
+
+// ─── PAGE HEADER ─────────────────────────────────────────────────────────────
+function PH({title,sub,action}) {
+  return (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:10}}>
+      <div><h2 style={{margin:0,fontSize:18,fontWeight:900,color:"#1e3a8a"}}>{title}</h2>{sub&&<p style={{color:"#6b7280",fontSize:12,margin:"4px 0 0"}}>{sub}</p>}</div>
+      {action}
+    </div>
+  );
+}
+
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function DashTab({now,shift,reguHari,posAssign,incidents,packages,guests,patrols,standJaga,setTab}) {
+  const pending=packages.filter(p=>p.status==="Belum Diambil").length;
+  const staying=guests.filter(g=>g.status==="Masih Ada").length;
+  const todP=patrols.filter(p=>new Date(p.ts).toDateString()===now.toDateString()).length;
+  const actI=incidents.filter(i=>i.status!=="Selesai").length;
+  const todS=standJaga.filter(s=>new Date(s.ts).toDateString()===now.toDateString());
+  const cards=[
+    {l:"Paket Belum Diambil",v:pending,col:"#d97706",bg:"#fffbeb",icon:"pkg",t:"package"},
+    {l:"Tamu Menginap",v:staying,col:"#7c3aed",bg:"#f5f3ff",icon:"ppl",t:"guest"},
+    {l:"Patroli Hari Ini",v:todP,col:"#059669",bg:"#f0fdf4",icon:"qr",t:"patrol"},
+    {l:"Insiden Aktif",v:actI,col:"#dc2626",bg:"#fef2f2",icon:"alert",t:"incident"},
+  ];
+  return (
+    <div>
+      <div style={{background:"linear-gradient(135deg,#1e3a8a,#2563eb)",borderRadius:16,padding:"18px 20px",marginBottom:16,color:"#fff"}}>
+        <div style={{fontSize:11,opacity:.7,marginBottom:2}}>Jadwal Jaga Hari Ini</div>
+        <div style={{fontSize:26,fontWeight:900,letterSpacing:1}}>REGU {reguHari}</div>
+        <div style={{fontSize:12,opacity:.8,marginTop:2}}>{REGU[reguHari]?.join(" · ")}</div>
+        <div style={{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <span style={{background:"rgba(255,255,255,.2)",borderRadius:7,padding:"3px 10px",fontSize:11,fontWeight:700}}>Shift {shift.l}: {shift.t}</span>
+          </div>
+          <div style={{fontSize:32,fontWeight:900,letterSpacing:2,fontVariantNumeric:"tabular-nums"}}>{now.toLocaleTimeString("id-ID")}</div>
+        </div>
+        <div style={{fontSize:11,opacity:.6,marginTop:4}}>{fmtDate(now)}</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+        {cards.map(c=>(
+          <div key={c.l} onClick={()=>setTab(c.t)} style={{background:c.bg,border:`1.5px solid ${c.col}22`,borderRadius:12,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:38,height:38,background:c.col+"18",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IC n={c.icon} s={18} c={c.col}/></div>
+            <div><div style={{fontSize:24,fontWeight:900,color:c.col}}>{c.v}</div><div style={{fontSize:10.5,color:"#6b7280"}}>{c.l}</div></div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <div style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,padding:"12px 14px"}}>
+          <div style={{fontSize:12,fontWeight:800,color:"#1d4ed8",marginBottom:8}}>Penempatan Pos</div>
+          {POS_LIST.map(p=>(
+            <div key={p} style={{padding:"4px 0",borderBottom:"1px solid #f1f5f9"}}>
+              <div style={{fontSize:10,color:"#9ca3af"}}>{p}</div>
+              <div style={{fontSize:11.5,fontWeight:700,color:posAssign[p]?.length?"#1e3a8a":"#d1d5db"}}>{posAssign[p]?.join(", ")||"—"}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,padding:"12px 14px"}}>
+          <div style={{fontSize:12,fontWeight:800,color:"#1d4ed8",marginBottom:8}}>Stand Jaga ({todS.length})</div>
+          {todS.length===0&&<div style={{fontSize:11,color:"#9ca3af"}}>Belum ada</div>}
+          {[...todS].reverse().slice(0,4).map(s=>(
+            <div key={s.id} style={{padding:"4px 0",borderBottom:"1px solid #f1f5f9"}}>
+              <div style={{fontSize:11.5,fontWeight:700,color:"#1e3a8a"}}>{s.area}</div>
+              <div style={{fontSize:10,color:"#6b7280"}}>{s.officer} · {fmtT(s.ts)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── JADWAL PIKET ─────────────────────────────────────────────────────────────
+function JadwalTab({now}) {
+  const days=[]; for(let i=-1;i<=13;i++){const d=new Date(now);d.setDate(d.getDate()+i);days.push(d);}
+  const RC={1:"#1d4ed8",2:"#059669",3:"#7c3aed"};
+  const RB={1:"#eff6ff",2:"#f0fdf4",3:"#f5f3ff"};
+  const rToday=getReguHari(now);
+  return (
+    <div>
+      <PH title="Jadwal Piket Otomatis" sub="14 Apr=Regu 2 · 15 Apr=Regu 3 · berputar"/>
+      <div style={{background:`linear-gradient(135deg,${RC[rToday]},${RC[rToday]}cc)`,borderRadius:14,padding:"16px 18px",marginBottom:14,color:"#fff"}}>
+        <div style={{fontSize:11,opacity:.75}}>HARI INI — {fmtDate(now)}</div>
+        <div style={{fontSize:26,fontWeight:900,marginTop:2}}>REGU {rToday}</div>
+        <div style={{marginTop:7,display:"flex",flexWrap:"wrap",gap:6}}>
+          {REGU[rToday].map(m=><span key={m} style={{background:"rgba(255,255,255,.23)",borderRadius:7,padding:"3px 10px",fontSize:12,fontWeight:700}}>{m}</span>)}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        {[1,2,3].map(r=>(
+          <div key={r} style={{background:RB[r],border:`1.5px solid ${RC[r]}30`,borderRadius:9,padding:"6px 10px",flex:1}}>
+            <div style={{fontSize:11,fontWeight:800,color:RC[r]}}>REGU {r}</div>
+            <div style={{fontSize:10,color:"#6b7280",marginTop:2}}>{REGU[r].join(", ")}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 70px 1.5fr",background:"#1d4ed8",padding:"8px 12px"}}>
+          {["Tanggal","Regu","Anggota"].map(h=><div key={h} style={{fontSize:10,fontWeight:800,color:"#fff",textTransform:"uppercase"}}>{h}</div>)}
+        </div>
+        {days.map((d,i)=>{
+          const r=getReguHari(d);
+          const isT=d.toDateString()===now.toDateString();
+          return (
+            <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 70px 1.5fr",padding:"8px 12px",borderBottom:"1px solid #f1f5f9",background:isT?RB[r]:i%2===0?"#fff":"#f9fafb",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:isT?800:600,color:isT?RC[r]:"#1e3a8a"}}>{d.toLocaleDateString("id-ID",{day:"numeric",month:"short"})}{isT&&<span style={{marginLeft:5,fontSize:9,background:RC[r],color:"#fff",borderRadius:4,padding:"1px 5px"}}>HARI INI</span>}</div>
+                <div style={{fontSize:10,color:"#9ca3af"}}>{d.toLocaleDateString("id-ID",{weekday:"long"})}</div>
+              </div>
+              <Bdg text={`Regu ${r}`} color={RC[r]}/>
+              <div style={{fontSize:11,color:"#374151"}}>{REGU[r].join(", ")}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── POS ──────────────────────────────────────────────────────────────────────
+function PosTab({reguHari,posAssign,setPosAssign,toast}) {
+  const members=REGU[reguHari]||[];
+  const [draft,setDraft]=useState({...posAssign});
+  const assign=(pos,m,chk)=>setDraft(prev=>{
+    const cur=prev[pos]||[]; const cap=POS_CAP[pos]||1;
+    if(chk&&cur.length>=cap) return prev;
+    return {...prev,[pos]:chk?[...cur,m]:cur.filter(x=>x!==m)};
+  });
+  const auto=()=>{ const sh=[...members]; setDraft({"Pos Utama":sh.slice(0,2),"Pos Asrama":[sh[2]],"Pos Guest House":[sh[3]],"Lobby Gedung Utama":[sh[4]]}); };
+  const save=()=>{ setPosAssign(draft); toast("Penempatan pos disimpan!"); };
+  return (
+    <div>
+      <PH title="Penempatan Pos" sub={`Regu ${reguHari}: ${members.join(", ")}`} action={<div style={{display:"flex",gap:8}}><Btn onClick={auto} color="#7c3aed" variant="outline" size="sm">⚡ Auto</Btn><Btn onClick={save} color="#1d4ed8">Simpan</Btn></div>}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        {POS_LIST.map(pos=>{
+          const col=POS_COL[pos], cap=POS_CAP[pos], asgn=draft[pos]||[];
+          return (
+            <div key={pos} style={{background:"#fff",border:`1.5px solid ${col}28`,borderRadius:12,overflow:"hidden"}}>
+              <div style={{background:col,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11.5,fontWeight:800,color:"#fff"}}>{pos}</span>
+                <span style={{background:"rgba(255,255,255,.25)",color:"#fff",borderRadius:5,padding:"2px 7px",fontSize:10}}>Maks {cap}</span>
+              </div>
+              <div style={{padding:10}}>
+                {members.map(m=>{
+                  const chk=asgn.includes(m);
+                  const el=Object.entries(draft).some(([p,ms])=>p!==pos&&ms?.includes(m));
+                  return (
+                    <label key={m} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 0",cursor:el&&!chk?"not-allowed":"pointer",opacity:el&&!chk?.4:1}}>
+                      <input type="checkbox" checked={chk} disabled={el&&!chk} onChange={e=>assign(pos,m,e.target.checked)} style={{accentColor:col,width:15,height:15}}/>
+                      <span style={{fontSize:12.5,fontWeight:chk?700:400,color:chk?"#1e3a8a":"#6b7280"}}>{m}</span>
+                      {chk&&<IC n="ok" s={12} c={col}/>}
+                    </label>
+                  );
+                })}
+                <div style={{marginTop:6,padding:"4px 8px",background:col+"12",borderRadius:6,fontSize:11,color:col,fontWeight:700}}>{asgn.length}/{cap} · {asgn.join(", ")||"Kosong"}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── STAND JAGA ───────────────────────────────────────────────────────────────
+function StandTab({standJaga,setStandJaga,posAssign,reguHari,toast}) {
+  const [scanOpen,setScanOpen]=useState(false);
+  const [confirm,setConfirm]=useState(null);
+  const [officer,setOfficer]=useState("");
+  const [notes,setNotes]=useState("");
+  const members=REGU[reguHari]||[];
+  const onScan=(area)=>{ setScanOpen(false); const pos=getPos(area); setConfirm({area,pos:pos||"—"}); setOfficer(posAssign[pos]?.join(", ")||""); setNotes(""); };
+  const doConfirm=()=>{ setStandJaga([...standJaga,{id:Date.now(),ts:Date.now(),area:confirm.area,pos:confirm.pos,officer:officer||"—",notes}]); setConfirm(null); toast(`Stand jaga ${confirm.area} dicatat!`); };
+  const todS=standJaga.filter(s=>new Date(s.ts).toDateString()===new Date().toDateString());
+  return (
+    <div>
+      <PH title="Stand Jaga" sub="Scan QR untuk mencatat posisi stand jaga" action={<Btn onClick={()=>setScanOpen(true)} color="#1d4ed8"><IC n="cam" s={13}/> Scan QR</Btn>}/>
+      <div style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,padding:"12px 14px"}}>
+        <div style={{fontSize:12,fontWeight:800,color:"#1d4ed8",marginBottom:10}}>Log Hari Ini ({todS.length})</div>
+        {todS.length===0&&<div style={{fontSize:12,color:"#9ca3af"}}>Belum ada stand jaga</div>}
+        {[...todS].reverse().map(s=>(
+          <div key={s.id} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid #f1f5f9",alignItems:"center"}}>
+            <div style={{width:34,height:34,background:"#eff6ff",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IC n="shield" s={16} c="#3b82f6"/></div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#1e3a8a"}}>{s.area}</div>
+              <div style={{fontSize:11,color:"#6b7280"}}>{s.pos} · {s.officer}</div>
+            </div>
+            <div style={{fontSize:11,fontWeight:700,color:"#1d4ed8"}}>{fmtT(s.ts)}</div>
+          </div>
+        ))}
+      </div>
+      <Modal open={scanOpen} onClose={()=>setScanOpen(false)} title="Scan QR — Stand Jaga" noPad><CamScanner onScan={onScan} onClose={()=>setScanOpen(false)}/></Modal>
+      <Modal open={!!confirm} onClose={()=>setConfirm(null)} title="Konfirmasi Stand Jaga">
+        {confirm&&(
+          <div>
+            <div style={{background:"#eff6ff",borderRadius:10,padding:"12px 16px",marginBottom:14,textAlign:"center"}}>
+              <div style={{fontSize:12,color:"#6b7280"}}>Gedung Pos</div>
+              <div style={{fontSize:20,fontWeight:900,color:"#1d4ed8"}}>{confirm.area}</div>
+              <div style={{fontSize:12,color:"#6b7280"}}>{confirm.pos}</div>
+            </div>
+            <Inp label="Nama Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} as="select"><option value="">— Pilih —</option>{members.map(m=><option key={m}>{m}</option>)}</Inp>
+            <Inp label="Catatan (opsional)" value={notes} onChange={e=>setNotes(e.target.value)} as="textarea" placeholder="Kondisi pos..."/>
+            <div style={{display:"flex",gap:8}}><Btn onClick={doConfirm} color="#16a34a" size="lg" full><IC n="ok" s={14}/> Konfirmasi</Btn><Btn onClick={()=>setConfirm(null)} color="#6b7280" variant="outline">Batal</Btn></div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+// ─── PATROL ───────────────────────────────────────────────────────────────────
+function PatrolTab({posAssign,patrols,setPatrols,toast}) {
+  const [scanOpen,setScanOpen]=useState(false);
+  const [confirm,setConfirm]=useState(null);
+  const [officer,setOfficer]=useState("");
+  const [notes,setNotes]=useState("");
+  const [viewQR,setViewQR]=useState(null);
+  const [activePos,setActivePos]=useState(POS_LIST[0]);
+  const onScan=(area)=>{ setScanOpen(false); const pos=getPos(area); setConfirm({area,pos:pos||"—"}); setOfficer(posAssign[pos]?.join(", ")||""); setNotes(""); };
+  const doP=()=>{ setPatrols([...patrols,{id:Date.now(),ts:Date.now(),pos:confirm.pos,officer:officer||"—",areas:[confirm.area],notes,qrScan:true}]); setConfirm(null); toast(`Patroli ${confirm.area} dicatat!`); };
+  const todP=patrols.filter(p=>new Date(p.ts).toDateString()===new Date().toDateString());
+  const areas=PATROL_AREAS[activePos]||[];
+  return (
+    <div>
+      <PH title="Patroli QR" sub="Scan QR di gedung sebagai bukti patroli" action={<Btn onClick={()=>setScanOpen(true)} color="#059669"><IC n="cam" s={13}/> Scan QR</Btn>}/>
+      <div style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,marginBottom:14,overflow:"hidden"}}>
+        <div style={{display:"flex",borderBottom:"1.5px solid #e0eaf8",overflowX:"auto"}}>
+          {POS_LIST.map(p=>(
+            <button key={p} onClick={()=>setActivePos(p)} style={{padding:"8px 10px",fontSize:11,fontWeight:700,background:activePos===p?"#eff6ff":"none",borderBottom:activePos===p?`2.5px solid ${POS_COL[p]}`:"none",border:"none",cursor:"pointer",color:activePos===p?POS_COL[p]:"#6b7280",whiteSpace:"nowrap",fontFamily:"inherit"}}>{p}</button>
+          ))}
+        </div>
+        <div style={{padding:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:10}}>
+            {areas.map(area=>{
+              const cnt=patrols.filter(p=>p.areas?.includes(area)).length;
+              const last=patrols.filter(p=>p.areas?.includes(area)).at(-1);
+              return (
+                <div key={area} style={{background:"#f8faff",border:"1.5px solid #dbeafe",borderRadius:10,padding:10,textAlign:"center"}}>
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:6}}><QRSvg value={encQR(area)} size={76}/></div>
+                  <div style={{fontSize:10.5,fontWeight:800,color:"#1e3a8a",marginBottom:2}}>{area}</div>
+                  <div style={{fontSize:10,color:"#6b7280"}}>{cnt}× scan</div>
+                  {last&&<div style={{fontSize:10,color:"#059669",fontWeight:700}}>{fmtT(last.ts)}</div>}
+                  <div style={{marginTop:6,display:"flex",gap:4,justifyContent:"center"}}>
+                    <Btn onClick={()=>onScan(area)} color={POS_COL[activePos]} size="sm">Scan</Btn>
+                    <Btn onClick={()=>setViewQR(area)} color="#6b7280" variant="outline" size="sm"><IC n="print" s={11}/></Btn>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <div style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,padding:"12px 14px"}}>
+        <div style={{fontSize:12,fontWeight:800,color:"#1d4ed8",marginBottom:10}}>Log Patroli Hari Ini ({todP.length})</div>
+        {todP.length===0&&<div style={{fontSize:11,color:"#9ca3af"}}>Belum ada patroli</div>}
+        {[...todP].reverse().slice(0,15).map(p=>(
+          <div key={p.id} style={{display:"flex",gap:9,padding:"7px 0",borderBottom:"1px solid #f1f5f9",alignItems:"center"}}>
+            <div style={{width:32,height:32,background:"#eff6ff",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><IC n="qr" s={14} c="#3b82f6"/></div>
+            <div style={{flex:1}}><div style={{fontSize:12.5,fontWeight:700,color:"#1e3a8a"}}>{p.areas?.join(", ")}</div><div style={{fontSize:10.5,color:"#6b7280"}}>{p.pos} · {p.officer}</div></div>
+            <span style={{fontSize:10.5,fontWeight:700,color:"#1d4ed8"}}>{fmtT(p.ts)}</span>
+          </div>
+        ))}
+      </div>
+      <Modal open={scanOpen} onClose={()=>setScanOpen(false)} title="Scan QR Patroli" noPad><CamScanner onScan={onScan} onClose={()=>setScanOpen(false)}/></Modal>
+      <Modal open={!!confirm} onClose={()=>setConfirm(null)} title="Konfirmasi Patroli">
+        {confirm&&(
+          <div>
+            <div style={{background:"#f0fdf4",borderRadius:10,padding:"12px",marginBottom:14,textAlign:"center"}}>
+              <div style={{fontSize:12,color:"#6b7280"}}>Titik Patroli</div>
+              <div style={{fontSize:20,fontWeight:900,color:"#059669"}}>{confirm.area}</div>
+            </div>
+            <Inp label="Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} placeholder="Nama petugas"/>
+            <Inp label="Catatan" value={notes} onChange={e=>setNotes(e.target.value)} as="textarea" placeholder="Kondisi titik patroli..."/>
+            <div style={{display:"flex",gap:8}}><Btn onClick={doP} color="#059669" size="lg" full><IC n="ok" s={14}/> Catat Patroli</Btn><Btn onClick={()=>setConfirm(null)} color="#6b7280" variant="outline">Batal</Btn></div>
+          </div>
+        )}
+      </Modal>
+      <Modal open={!!viewQR} onClose={()=>setViewQR(null)} title={`Cetak QR: ${viewQR}`}>
+        {viewQR&&(
+          <div style={{textAlign:"center"}}>
+            <div style={{background:"#fff",border:"2px solid #1e3a8a",borderRadius:14,padding:18,display:"inline-block",marginBottom:10}}>
+              <QRSvg value={encQR(viewQR)} size={190}/>
+              <div style={{marginTop:8,fontSize:13,fontWeight:800,color:"#1e3a8a"}}>{viewQR}</div>
+              <div style={{fontSize:10,color:"#6b7280"}}>BBPKA II Jatinangor</div>
+            </div>
+            <div style={{color:"#6b7280",fontSize:12,marginBottom:12}}>Screenshot & cetak, tempel di {viewQR}</div>
+            <Btn onClick={()=>setViewQR(null)} color="#1d4ed8">Tutup</Btn>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+// ─── INCIDENT ─────────────────────────────────────────────────────────────────
+function IncTab({incidents,setIncidents,posAssign,toast}) {
+  const [open,setOpen]=useState(false);
+  const [fm,setFm]=useState({title:"",desc:"",category:"Rendah",pos:POS_LIST[0],photo:"",status:"Aktif"});
+  const f=(k,v)=>setFm(p=>({...p,[k]:v}));
+  const submit=()=>{if(!fm.title){toast("Judul wajib!",false);return;} setIncidents([...incidents,{...fm,id:Date.now(),ts:Date.now(),officer:posAssign[fm.pos]?.join(", ")||"—"}]); setFm({title:"",desc:"",category:"Rendah",pos:POS_LIST[0],photo:"",status:"Aktif"}); setOpen(false); toast("Insiden dicatat!");};
+  const upd=(id,s)=>setIncidents(incidents.map(i=>i.id===id?{...i,status:s}:i));
+  const photo=(e)=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=()=>f("photo",r.result);r.readAsDataURL(file);};
+  return (
+    <div>
+      <PH title="Laporan Insiden" sub="Rendah · Sedang · Penting" action={<Btn onClick={()=>setOpen(true)} color="#dc2626"><IC n="plus" s={13}/> Laporkan</Btn>}/>
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        {INC_CAT.map(c=>{const cnt=incidents.filter(i=>i.category===c&&i.status!=="Selesai").length; return <div key={c} style={{background:CAT_BG[c],border:`1.5px solid ${CAT_COL[c]}28`,borderRadius:10,padding:"10px 14px",flex:1,textAlign:"center"}}><div style={{fontSize:24,fontWeight:900,color:CAT_COL[c]}}>{cnt}</div><div style={{fontSize:11,color:CAT_COL[c],fontWeight:700}}>{c}</div></div>;})}
+      </div>
+      {incidents.length===0&&<div style={{color:"#9ca3af",fontSize:13}}>Belum ada insiden.</div>}
+      {[...incidents].reverse().map(inc=>(
+        <div key={inc.id} style={{background:CAT_BG[inc.category],border:`1.5px solid ${CAT_COL[inc.category]}22`,borderRadius:12,padding:"11px 13px",marginBottom:9}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,flexWrap:"wrap",gap:4}}>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}><Bdg text={inc.category} color={CAT_COL[inc.category]}/><Bdg text={inc.status} color={inc.status==="Selesai"?"#059669":"#d97706"}/></div>
+            <span style={{fontSize:10.5,color:"#9ca3af"}}>{fmtDT(inc.ts)}</span>
+          </div>
+          <div style={{fontSize:14,fontWeight:800,color:"#1e3a8a",marginBottom:2}}>{inc.title}</div>
+          <div style={{fontSize:12.5,color:"#374151",marginBottom:4}}>{inc.desc}</div>
+          <div style={{fontSize:11,color:"#6b7280"}}>Petugas: {inc.officer}</div>
+          {inc.photo&&<img src={inc.photo} alt="bukti" style={{width:100,height:68,objectFit:"cover",borderRadius:7,marginTop:7}}/>}
+          {inc.status!=="Selesai"&&<div style={{display:"flex",gap:7,marginTop:8}}><Btn onClick={()=>upd(inc.id,"Dalam Penanganan")} color="#d97706" size="sm" variant="outline">Penanganan</Btn><Btn onClick={()=>upd(inc.id,"Selesai")} color="#059669" size="sm">✓ Selesai</Btn></div>}
+        </div>
+      ))}
+      <Modal open={open} onClose={()=>setOpen(false)} title="Laporkan Insiden">
+        <Inp label="Judul" value={fm.title} onChange={e=>f("title",e.target.value)} placeholder="Judul insiden"/>
+        <Inp label="Deskripsi" value={fm.desc} onChange={e=>f("desc",e.target.value)} as="textarea" placeholder="Detail kejadian..."/>
+        <div style={{display:"flex",gap:10}}><Inp label="Kategori" value={fm.category} onChange={e=>f("category",e.target.value)} as="select" half>{INC_CAT.map(c=><option key={c}>{c}</option>)}</Inp><Inp label="Pos" value={fm.pos} onChange={e=>f("pos",e.target.value)} as="select" half>{POS_LIST.map(p=><option key={p}>{p}</option>)}</Inp></div>
+        <div style={{marginBottom:12}}><label style={{display:"block",fontSize:11,color:"#3b82f6",marginBottom:4,fontWeight:700,textTransform:"uppercase"}}>Foto Bukti</label><input type="file" accept="image/*" capture="environment" onChange={photo} style={{fontSize:12,color:"#374151"}}/>{fm.photo&&<img src={fm.photo} alt="" style={{marginTop:7,width:90,height:62,objectFit:"cover",borderRadius:7}}/>}</div>
+        <div style={{display:"flex",gap:8}}><Btn onClick={submit} color="#dc2626" size="lg">Simpan</Btn><Btn onClick={()=>setOpen(false)} color="#6b7280" variant="outline" size="lg">Batal</Btn></div>
+      </Modal>
+    </div>
+  );
+}
+
+// ─── PACKAGE ──────────────────────────────────────────────────────────────────
+function PkgTab({packages,setPackages,toast}) {
+  const [open,setOpen]=useState(false);
+  const [fm,setFm]=useState({recipient:"",sender:"",type:"Paket",notes:"",status:"Belum Diambil"});
+  const f=(k,v)=>setFm(p=>({...p,[k]:v}));
+  const submit=()=>{if(!fm.recipient){toast("Penerima wajib!",false);return;} setPackages([...packages,{...fm,id:Date.now(),ts:Date.now()}]); setFm({recipient:"",sender:"",type:"Paket",notes:"",status:"Belum Diambil"}); setOpen(false); toast("Paket dicatat!");};
+  const upd=(id,s)=>{setPackages(packages.map(p=>p.id===id?{...p,status:s,takenAt:Date.now()}:p));toast("Status diperbarui!");};
+  const types=["Paket","Surat","Go-Food / GoJek","GrabFood","Shopee Food","Kurir Lainnya"];
+  const pend=packages.filter(p=>p.status==="Belum Diambil");
+  const done=packages.filter(p=>p.status!=="Belum Diambil");
+  return (
+    <div>
+      <PH title="Paket & Kurir" sub="Catat dan kelola paket masuk" action={<Btn onClick={()=>setOpen(true)} color="#1d4ed8"><IC n="plus" s={13}/> Catat</Btn>}/>
+      <div style={{display:"flex",gap:10,marginBottom:14}}>
+        <div style={{background:"#fffbeb",border:"1.5px solid #fcd34d",borderRadius:10,padding:"10px 14px",flex:1,textAlign:"center"}}><div style={{fontSize:24,fontWeight:900,color:"#d97706"}}>{pend.length}</div><div style={{fontSize:11,color:"#d97706",fontWeight:700}}>Belum Diambil</div></div>
+        <div style={{background:"#f0fdf4",border:"1.5px solid #86efac",borderRadius:10,padding:"10px 14px",flex:1,textAlign:"center"}}><div style={{fontSize:24,fontWeight:900,color:"#059669"}}>{done.length}</div><div style={{fontSize:11,color:"#059669",fontWeight:700}}>Selesai</div></div>
+      </div>
+      {pend.length>0&&<><div style={{fontSize:12,fontWeight:800,color:"#d97706",marginBottom:7}}>⚠ Menunggu Pengambilan</div>{pend.map(p=><PC key={p.id} p={p} upd={upd}/>)}<div style={{borderTop:"1.5px solid #e0eaf8",margin:"12px 0"}}/></>}
+      {done.length>0&&<><div style={{fontSize:12,fontWeight:700,color:"#9ca3af",marginBottom:7}}>Riwayat</div>{[...done].reverse().map(p=><PC key={p.id} p={p} upd={upd}/>)}</>}
+      {packages.length===0&&<div style={{color:"#9ca3af",fontSize:13}}>Belum ada paket.</div>}
+      <Modal open={open} onClose={()=>setOpen(false)} title="Catat Paket / Kurir">
+        <Inp label="Penerima" value={fm.recipient} onChange={e=>f("recipient",e.target.value)} placeholder="Nama karyawan"/>
+        <Inp label="Pengirim" value={fm.sender} onChange={e=>f("sender",e.target.value)} placeholder="Nama pengirim"/>
+        <Inp label="Jenis" value={fm.type} onChange={e=>f("type",e.target.value)} as="select">{types.map(t=><option key={t}>{t}</option>)}</Inp>
+        <Inp label="Resi / Keterangan" value={fm.notes} onChange={e=>f("notes",e.target.value)} placeholder="Nomor resi"/>
+        <div style={{display:"flex",gap:8}}><Btn onClick={submit} color="#1d4ed8" size="lg">Simpan</Btn><Btn onClick={()=>setOpen(false)} color="#6b7280" variant="outline" size="lg">Batal</Btn></div>
+      </Modal>
+    </div>
+  );
+}
+function PC({p,upd}) {
+  const pen=p.status==="Belum Diambil";
+  return <div style={{background:pen?"#fffbeb":"#fff",border:`1.5px solid ${pen?"#fcd34d":"#dbeafe"}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5}}><Bdg text={p.type} color="#1d4ed8"/><Bdg text={p.status} color={pen?"#d97706":"#059669"}/></div><span style={{fontSize:10.5,color:"#9ca3af"}}>{fmtDT(p.ts)}</span></div><div style={{fontSize:13,fontWeight:800,color:"#1e3a8a"}}>Untuk: {p.recipient}</div><div style={{fontSize:11.5,color:"#6b7280"}}>Dari: {p.sender||"—"}</div>{p.notes&&<div style={{fontSize:11,color:"#6b7280"}}>Resi: {p.notes}</div>}{pen&&<div style={{marginTop:7,display:"flex",gap:7}}><Btn onClick={()=>upd(p.id,"Sudah Diambil")} color="#059669" size="sm">✓ Diambil</Btn><Btn onClick={()=>upd(p.id,"Diantar")} color="#1d4ed8" size="sm">🛵 Diantar</Btn></div>}</div>;
+}
+
+// ─── GUEST ────────────────────────────────────────────────────────────────────
+function GuestTab({guests,setGuests,toast}) {
+  const [open,setOpen]=useState(false);
+  const [fm,setFm]=useState({name:"",institution:"",purpose:"",type:"Tamu Harian",room:"",status:"Masih Ada"});
+  const f=(k,v)=>setFm(p=>({...p,[k]:v}));
+  const submit=()=>{if(!fm.name){toast("Nama wajib!",false);return;} setGuests([...guests,{...fm,id:Date.now(),ts:Date.now()}]); setFm({name:"",institution:"",purpose:"",type:"Tamu Harian",room:"",status:"Masih Ada"}); setOpen(false); toast("Tamu dicatat!");};
+  const co=(id)=>{setGuests(guests.map(g=>g.id===id?{...g,status:"Sudah Keluar",checkOut:Date.now()}:g));toast("Tamu check-out!");};
+  const staying=guests.filter(g=>g.status==="Masih Ada");
+  const gone=guests.filter(g=>g.status!=="Masih Ada");
+  return (
+    <div>
+      <PH title="Tamu & Peserta Asrama" sub="Tamu harian, menginap, pelatihan, VIP" action={<Btn onClick={()=>setOpen(true)} color="#7c3aed"><IC n="plus" s={13}/> Catat Tamu</Btn>}/>
+      {staying.length>0&&<><div style={{fontSize:12,fontWeight:800,color:"#7c3aed",marginBottom:7}}>🏠 Masih Ada ({staying.length})</div>{staying.map(g=><GC key={g.id} g={g} co={co}/>)}<div style={{borderTop:"1.5px solid #e0eaf8",margin:"12px 0"}}/></>}
+      {gone.length>0&&<><div style={{fontSize:12,fontWeight:700,color:"#9ca3af",marginBottom:7}}>Riwayat</div>{[...gone].reverse().map(g=><GC key={g.id} g={g} co={co}/>)}</>}
+      {guests.length===0&&<div style={{color:"#9ca3af",fontSize:13}}>Belum ada tamu.</div>}
+      <Modal open={open} onClose={()=>setOpen(false)} title="Catat Tamu / Peserta">
+        <Inp label="Nama" value={fm.name} onChange={e=>f("name",e.target.value)} placeholder="Nama lengkap"/>
+        <Inp label="Instansi / Asal" value={fm.institution} onChange={e=>f("institution",e.target.value)} placeholder="Instansi"/>
+        <Inp label="Jenis" value={fm.type} onChange={e=>f("type",e.target.value)} as="select">{["Tamu Harian","Menginap (Guest House)","Peserta Pelatihan","Tamu VIP"].map(t=><option key={t}>{t}</option>)}</Inp>
+        <Inp label="Keperluan" value={fm.purpose} onChange={e=>f("purpose",e.target.value)} placeholder="Tujuan kunjungan"/>
+        <Inp label="Kamar / Kelas" value={fm.room} onChange={e=>f("room",e.target.value)} placeholder="GH-3, Asrama A, dst."/>
+        <div style={{display:"flex",gap:8}}><Btn onClick={submit} color="#7c3aed" size="lg">Simpan</Btn><Btn onClick={()=>setOpen(false)} color="#6b7280" variant="outline" size="lg">Batal</Btn></div>
+      </Modal>
+    </div>
+  );
+}
+function GC({g,co}) {
+  const act=g.status==="Masih Ada";
+  return <div style={{background:act?"#f5f3ff":"#fff",border:`1.5px solid ${act?"#c4b5fd":"#dbeafe"}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><div style={{display:"flex",gap:5}}><Bdg text={g.type} color="#7c3aed"/><Bdg text={g.status} color={act?"#7c3aed":"#6b7280"}/></div><span style={{fontSize:10.5,color:"#9ca3af"}}>{fmtDT(g.ts)}</span></div><div style={{fontSize:13,fontWeight:800,color:"#1e3a8a"}}>{g.name}</div><div style={{fontSize:11.5,color:"#6b7280"}}>{g.institution}</div>{g.purpose&&<div style={{fontSize:11,color:"#6b7280"}}>Keperluan: {g.purpose}</div>}{g.room&&<div style={{fontSize:11,color:"#6b7280"}}>Kamar: {g.room}</div>}{act&&<div style={{marginTop:7}}><Btn onClick={()=>co(g.id)} color="#059669" size="sm">✓ Check-Out</Btn></div>}</div>;
+}
+
+// ─── MUTATION ─────────────────────────────────────────────────────────────────
+function MutTab({mutations,setMutations,reguHari,toast}) {
+  const [open,setOpen]=useState(false);
+  const [fm,setFm]=useState({content:"",fromRegu:reguHari,toRegu:"",incidents:"",packages:"",guests:"",notes:""});
+  const f=(k,v)=>setFm(p=>({...p,[k]:v}));
+  const submit=()=>{if(!fm.content){toast("Isi laporan!",false);return;} setMutations([...mutations,{...fm,id:Date.now(),ts:Date.now()}]); setFm({content:"",fromRegu:reguHari,toRegu:"",incidents:"",packages:"",guests:"",notes:""}); setOpen(false); toast("Mutasi disimpan!");};
+  return (
+    <div>
+      <PH title="Serah Terima Mutasi" sub="Laporan pergantian shift antar regu" action={<Btn onClick={()=>setOpen(true)} color="#1d4ed8"><IC n="plus" s={13}/> Buat Mutasi</Btn>}/>
+      {mutations.length===0&&<div style={{color:"#9ca3af",fontSize:13}}>Belum ada mutasi.</div>}
+      {[...mutations].reverse().map(m=>(
+        <div key={m.id} style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,padding:"12px 14px",marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:4}}>
+            <div style={{display:"flex",gap:7,alignItems:"center"}}><Bdg text={`Regu ${m.fromRegu}`} color="#1d4ed8"/><IC n="arr" s={13} c="#9ca3af"/>{m.toRegu&&<Bdg text={`Regu ${m.toRegu}`} color="#059669"/>}</div>
+            <span style={{fontSize:10.5,color:"#9ca3af"}}>{fmtDT(m.ts)}</span>
+          </div>
+          <div style={{background:"#f8faff",borderRadius:8,padding:"8px 10px",marginBottom:7,fontSize:12.5,color:"#374151",whiteSpace:"pre-wrap",lineHeight:1.65}}>{m.content}</div>
+          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+            {m.incidents&&<div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:6,padding:"4px 8px"}}><div style={{fontSize:9.5,color:"#9ca3af"}}>INSIDEN</div><div style={{fontSize:11.5,color:"#dc2626",fontWeight:700}}>{m.incidents}</div></div>}
+            {m.packages&&<div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:6,padding:"4px 8px"}}><div style={{fontSize:9.5,color:"#9ca3af"}}>PAKET</div><div style={{fontSize:11.5,color:"#d97706",fontWeight:700}}>{m.packages}</div></div>}
+            {m.guests&&<div style={{background:"#f5f3ff",border:"1px solid #c4b5fd",borderRadius:6,padding:"4px 8px"}}><div style={{fontSize:9.5,color:"#9ca3af"}}>TAMU</div><div style={{fontSize:11.5,color:"#7c3aed",fontWeight:700}}>{m.guests}</div></div>}
+          </div>
+          {m.notes&&<div style={{fontSize:11.5,color:"#6b7280",marginTop:6}}>📝 {m.notes}</div>}
+        </div>
+      ))}
+      <Modal open={open} onClose={()=>setOpen(false)} title="Buat Laporan Mutasi">
+        <div style={{display:"flex",gap:10}}><Inp label="Dari Regu" value={fm.fromRegu} onChange={e=>f("fromRegu",e.target.value)} as="select" half>{[1,2,3].map(r=><option key={r} value={r}>Regu {r}</option>)}</Inp><Inp label="Kepada Regu" value={fm.toRegu} onChange={e=>f("toRegu",e.target.value)} as="select" half><option value="">— Pilih —</option>{[1,2,3].map(r=><option key={r} value={r}>Regu {r}</option>)}</Inp></div>
+        <Inp label="Laporan Kejadian" value={fm.content} onChange={e=>f("content",e.target.value)} as="textarea" placeholder="Semua kejadian penting selama shift..."/>
+        <div style={{display:"flex",gap:10}}><Inp label="Insiden" value={fm.incidents} onChange={e=>f("incidents",e.target.value)} placeholder="Detail" half/><Inp label="Paket" value={fm.packages} onChange={e=>f("packages",e.target.value)} placeholder="Jumlah" half/><Inp label="Tamu" value={fm.guests} onChange={e=>f("guests",e.target.value)} placeholder="Nama" half/></div>
+        <Inp label="Catatan Tambahan" value={fm.notes} onChange={e=>f("notes",e.target.value)} as="textarea" placeholder="Pesan untuk regu berikutnya..."/>
+        <div style={{display:"flex",gap:8}}><Btn onClick={submit} color="#1d4ed8" size="lg">Simpan</Btn><Btn onClick={()=>setOpen(false)} color="#6b7280" variant="outline" size="lg">Batal</Btn></div>
+      </Modal>
+    </div>
+  );
+}
+
+// ─── ROLLING ──────────────────────────────────────────────────────────────────
+function RollTab({rollings,setRollings,reguHari,toast}) {
+  const [open,setOpen]=useState(false);
+  const [fm,setFm]=useState({time:"",fromRegu:reguHari,toRegu:"",notes:""});
+  const f=(k,v)=>setFm(p=>({...p,[k]:v}));
+  const submit=()=>{setRollings([...rollings,{...fm,id:Date.now(),ts:Date.now()}]);setOpen(false);toast("Rolling dicatat!");};
+  const todR=rollings.filter(r=>new Date(r.ts).toDateString()===new Date().toDateString());
+  return (
+    <div>
+      <PH title="Rolling Shift" sub="Pergantian pos & jadwal rolling" action={<Btn onClick={()=>setOpen(true)} color="#0891b2"><IC n="rot" s={13}/> Catat Rolling</Btn>}/>
+      <div style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:800,color:"#1d4ed8",marginBottom:9}}>Jadwal Rolling</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {ROLLING_TIMES.map(t=>{const done=todR.some(r=>r.time===t); return <div key={t} style={{background:done?"#f0fdf4":"#f8faff",border:`1.5px solid ${done?"#86efac":"#dbeafe"}`,borderRadius:9,padding:"8px 14px",textAlign:"center",minWidth:62}}><div style={{fontSize:16,fontWeight:900,color:done?"#059669":"#1d4ed8"}}>{t}</div><div style={{fontSize:10,color:done?"#059669":"#9ca3af"}}>{done?"✓":"WIB"}</div></div>;})}
+        </div>
+      </div>
+      {rollings.length===0&&<div style={{color:"#9ca3af",fontSize:13}}>Belum ada rolling.</div>}
+      {[...rollings].reverse().map(r=>(
+        <div key={r.id} style={{background:"#fff",border:"1.5px solid #dbeafe",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,flexWrap:"wrap",gap:4}}>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}><Bdg text={r.time||fmtT(r.ts)} color="#0891b2"/><Bdg text={`Regu ${r.fromRegu}`} color="#1d4ed8"/>{r.toRegu&&<><IC n="arr" s={12} c="#9ca3af"/><Bdg text={`Regu ${r.toRegu}`} color="#059669"/></>}</div>
+            <span style={{fontSize:10.5,color:"#9ca3af"}}>{fmtDT(r.ts)}</span>
+          </div>
+          {r.notes&&<div style={{fontSize:12.5,color:"#374151"}}>{r.notes}</div>}
+        </div>
+      ))}
+      <Modal open={open} onClose={()=>setOpen(false)} title="Catat Rolling Shift">
+        <Inp label="Jam Rolling" value={fm.time} onChange={e=>f("time",e.target.value)} as="select"><option value="">— Pilih jam —</option>{ROLLING_TIMES.map(t=><option key={t}>{t}</option>)}</Inp>
+        <div style={{display:"flex",gap:10}}><Inp label="Dari Regu" value={fm.fromRegu} onChange={e=>f("fromRegu",e.target.value)} as="select" half>{[1,2,3].map(r=><option key={r} value={r}>Regu {r}</option>)}</Inp><Inp label="Kepada Regu" value={fm.toRegu} onChange={e=>f("toRegu",e.target.value)} as="select" half><option value="">—</option>{[1,2,3].map(r=><option key={r} value={r}>Regu {r}</option>)}</Inp></div>
+        <Inp label="Catatan" value={fm.notes} onChange={e=>f("notes",e.target.value)} as="textarea" placeholder="Catatan pergantian..."/>
+        <div style={{display:"flex",gap:8}}><Btn onClick={submit} color="#0891b2" size="lg">Simpan</Btn><Btn onClick={()=>setOpen(false)} color="#6b7280" variant="outline" size="lg">Batal</Btn></div>
+      </Modal>
+    </div>
+  );
+}
+
+// ─── BOTTOM NAV (mobile) ───────────────────────────────────────────────────────
+const NAV_TABS = [
+  {id:"dashboard",label:"Dashboard",icon:"home"},
+  {id:"jadwal",label:"Jadwal",icon:"cal"},
+  {id:"patrol",label:"Patroli",icon:"qr"},
+  {id:"incident",label:"Insiden",icon:"alert"},
+  {id:"more",label:"Lainnya",icon:"menu"},
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// APP ROOT
+// ═══════════════════════════════════════════════════════════════════════════════
+function App() {
+  const [tab,setTab]=useState("dashboard");
+  const [now,setNow]=useState(new Date());
+  const [moreOpen,setMoreOpen]=useState(false);
+  useEffect(()=>{ const id=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(id); },[]);
+
+  const shift=getShift(now);
+  const reguHari=getReguHari(now);
+
+  const [posAssign,setPosAssign]=useLS("pad_pos",{});
+  const [incidents,setIncidents]=useLS("pad_inc",[]);
+  const [packages,setPackages]=useLS("pad_pkg",[]);
+  const [guests,setGuests]=useLS("pad_guest",[]);
+  const [patrols,setPatrols]=useLS("pad_patrol",[]);
+  const [mutations,setMutations]=useLS("pad_mut",[]);
+  const [rollings,setRollings]=useLS("pad_roll",[]);
+  const [standJaga,setStandJaga]=useLS("pad_stand",[]);
+  const [notif,setNotif]=useState(null);
+
+  const toast=(msg,ok=true)=>{ setNotif({msg,ok}); setTimeout(()=>setNotif(null),3000); };
+
+  const MORE_TABS=[
+    {id:"pos",label:"Penempatan Pos",icon:"pos"},
+    {id:"stand",label:"Stand Jaga",icon:"shield"},
+    {id:"package",label:"Paket & Kurir",icon:"pkg"},
+    {id:"guest",label:"Tamu & Asrama",icon:"ppl"},
+    {id:"mutation",label:"Mutasi Laporan",icon:"file"},
+    {id:"rolling",label:"Rolling Shift",icon:"rot"},
+  ];
+
+  const pending=packages.filter(p=>p.status==="Belum Diambil").length;
+  const activeI=incidents.filter(i=>i.status!=="Selesai").length;
+
+  const goTab=(t)=>{ setTab(t); setMoreOpen(false); };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#eef3fb",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column",paddingBottom:64}}>
+      {/* HEADER */}
+      <header style={{background:"linear-gradient(135deg,#1e3a8a 0%,#2563eb 70%,#3b82f6 100%)",position:"sticky",top:0,zIndex:200,height:52,display:"flex",alignItems:"center",padding:"0 14px",gap:10,boxShadow:"0 2px 14px rgba(30,58,138,.2)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:28,height:28,background:"rgba(255,255,255,.22)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center"}}><IC n="shield" s={15} c="#fff"/></div>
+          <div><div style={{fontSize:13,fontWeight:900,color:"#fff",letterSpacing:.5}}>SIPAMDAL</div><div style={{fontSize:8.5,color:"rgba(255,255,255,.65)",letterSpacing:1}}>BBPKA II JATINANGOR</div></div>
+        </div>
+        <div style={{flex:1}}/>
+        {pending>0&&<div style={{background:"#fbbf24",color:"#78350f",borderRadius:20,padding:"2px 8px",fontSize:10.5,fontWeight:800}}>📦{pending}</div>}
+        {activeI>0&&<div style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"2px 8px",fontSize:10.5,fontWeight:800}}>⚠{activeI}</div>}
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:14,fontWeight:900,color:"#fff",letterSpacing:1.5,fontVariantNumeric:"tabular-nums"}}>{now.toLocaleTimeString("id-ID")}</div>
+          <div style={{fontSize:8.5,color:"rgba(255,255,255,.55)"}}>{fmtDS(now)} · Regu {reguHari}</div>
+        </div>
+      </header>
+
+      {/* TOAST */}
+      {notif&&<div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:notif.ok?"#16a34a":"#dc2626",color:"#fff",borderRadius:10,padding:"9px 18px",fontWeight:700,fontSize:13,boxShadow:"0 4px 20px rgba(0,0,0,.2)",whiteSpace:"nowrap"}}>{notif.ok?"✓ ":"✕ "}{notif.msg}</div>}
+
+      {/* MORE DRAWER */}
+      {moreOpen&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.4)"}} onClick={()=>setMoreOpen(false)}>
+          <div style={{position:"absolute",bottom:64,left:0,right:0,background:"#fff",borderRadius:"20px 20px 0 0",padding:"16px 16px 10px"}} onClick={e=>e.stopPropagation()}>
+            <div style={{width:36,height:4,background:"#e2e8f0",borderRadius:4,margin:"0 auto 14px"}}/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {MORE_TABS.map(t=>(
+                <button key={t.id} onClick={()=>goTab(t.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:tab===t.id?"#eff6ff":"#f8faff",border:`1.5px solid ${tab===t.id?"#bfdbfe":"#e0eaf8"}`,borderRadius:12,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <IC n={t.icon} s={18} c={tab===t.id?"#1d4ed8":"#6b7280"}/>
+                  <span style={{fontSize:12.5,fontWeight:700,color:tab===t.id?"#1d4ed8":"#374151"}}>{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONTENT */}
+      <main style={{flex:1,padding:"14px 14px 0",overflowY:"auto"}}>
+        {tab==="dashboard"&&<DashTab now={now} shift={shift} reguHari={reguHari} posAssign={posAssign} incidents={incidents} packages={packages} guests={guests} patrols={patrols} standJaga={standJaga} setTab={setTab}/>}
+        {tab==="jadwal"&&<JadwalTab now={now}/>}
+        {tab==="pos"&&<PosTab reguHari={reguHari} posAssign={posAssign} setPosAssign={setPosAssign} toast={toast}/>}
+        {tab==="stand"&&<StandTab standJaga={standJaga} setStandJaga={setStandJaga} posAssign={posAssign} reguHari={reguHari} toast={toast}/>}
+        {tab==="patrol"&&<PatrolTab posAssign={posAssign} patrols={patrols} setPatrols={setPatrols} toast={toast}/>}
+        {tab==="incident"&&<IncTab incidents={incidents} setIncidents={setIncidents} posAssign={posAssign} toast={toast}/>}
+        {tab==="package"&&<PkgTab packages={packages} setPackages={setPackages} toast={toast}/>}
+        {tab==="guest"&&<GuestTab guests={guests} setGuests={setGuests} toast={toast}/>}
+        {tab==="mutation"&&<MutTab mutations={mutations} setMutations={setMutations} reguHari={reguHari} toast={toast}/>}
+        {tab==="rolling"&&<RollTab rollings={rollings} setRollings={setRollings} reguHari={reguHari} toast={toast}/>}
+      </main>
+
+      {/* BOTTOM NAV */}
+      <nav style={{position:"fixed",bottom:0,left:0,right:0,zIndex:300,background:"#fff",borderTop:"1.5px solid #e0eaf8",display:"flex",height:64,boxShadow:"0 -2px 16px rgba(30,58,138,.08)"}}>
+        {NAV_TABS.map(t=>{
+          const active = t.id==="more" ? moreOpen : tab===t.id;
+          return (
+            <button key={t.id} onClick={()=>{ if(t.id==="more"){setMoreOpen(v=>!v);}else{setTab(t.id);setMoreOpen(false);}}} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,background:"none",border:"none",cursor:"pointer",color:active?"#1d4ed8":"#9ca3af",transition:"color .15s",fontFamily:"inherit",position:"relative"}}>
+              {t.id==="incident"&&activeI>0&&<div style={{position:"absolute",top:8,right:"calc(50% - 14px)",width:16,height:16,background:"#ef4444",borderRadius:8,fontSize:9,color:"#fff",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{activeI}</div>}
+              <IC n={t.icon} s={22} c={active?"#1d4ed8":"#9ca3af"}/>
+              <span style={{fontSize:10,fontWeight:active?800:600}}>{t.label}</span>
+              {active&&t.id!=="more"&&<div style={{position:"absolute",bottom:0,left:"20%",right:"20%",height:3,background:"#1d4ed8",borderRadius:3}}/>}
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
+// Register Service Worker
+if('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  });
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
