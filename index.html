@@ -1188,13 +1188,139 @@ function MutPrint({m, onClose}) {
   );
 }
 
-function MutTab({mutations,setMutations,reguHari,toast,canEdit}) {
+function MutTab({mutations,setMutations,reguHari,toast,canEdit,patrols=[],incidents=[],packages=[],guests=[],currentUser,rollings=[],standJaga=[]}) {
   const [open,setOpen]=useState(false);
   const [photo,setPhoto]=useState(null);
   const [viewPhoto,setViewPhoto]=useState(null);
   const [printMut,setPrintMut]=useState(null);
   const [fm,setFm]=useState({content:"",fromRegu:reguHari,toRegu:"",incidents:"",packages:"",guests:"",notes:""});
   const f=(k,v)=>setFm(p=>({...p,[k]:v}));
+
+  // ── Auto-isi SEMUA aktivitas hari ini ───────────────────────────────────
+  const buatAutoLaporan = () => {
+    const today = new Date().toDateString();
+    const nama = currentUser?.name || "";
+
+    // Patroli
+    const patrolHari = patrols.filter(p => new Date(p.ts).toDateString() === today);
+    const patrolSaya = patrolHari.filter(p => p.officer && p.officer.includes(nama));
+
+    // Insiden hari ini
+    const insidenHari = incidents.filter(i => new Date(i.ts).toDateString() === today);
+    const insidenAktif = incidents.filter(i => i.status !== "Selesai");
+    const insidenSelesaiHari = incidents.filter(i => i.status === "Selesai" && new Date(i.ts).toDateString() === today);
+
+    // Paket hari ini
+    const paketMasukHari = packages.filter(p => new Date(p.ts).toDateString() === today);
+    const paketDiambilHari = packages.filter(p => p.takenAt && new Date(p.takenAt).toDateString() === today);
+    const paketPending = packages.filter(p => p.status === "Belum Diambil");
+
+    // Tamu hari ini
+    const tamuMasukHari = guests.filter(g => new Date(g.ts).toDateString() === today);
+    const tamuKeluarHari = guests.filter(g => g.checkOut && new Date(g.checkOut).toDateString() === today);
+    const tamuAda = guests.filter(g => g.status === "Masih Ada");
+
+    let isi = "═══ LAPORAN SHIFT " + new Date().toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long",year:"numeric"}) + " ═══\n\n";
+
+    // 1. PATROLI
+    isi += "📡 PATROLI (" + patrolHari.length + "x hari ini):\n";
+    if (patrolHari.length > 0) {
+      patrolHari.forEach((p, i) => {
+        isi += "  " + (i+1) + ". " + (p.areas||[]).join(", ") + " — " + fmtT(p.ts) + " — " + (p.officer||"—");
+        if (p.notes) isi += " — Ket: " + p.notes;
+        isi += "\n";
+      });
+    } else {
+      isi += "  Belum ada patroli tercatat.\n";
+    }
+    isi += "\n";
+
+    // 2. INSIDEN
+    isi += "⚠️ INSIDEN:\n";
+    if (insidenHari.length > 0) {
+      insidenHari.forEach(inc => {
+        isi += "  - [" + inc.category + "] " + inc.title + " — " + inc.pos + " — " + fmtT(inc.ts) + " — Status: " + inc.status + "\n";
+        if (inc.desc) isi += "    Ket: " + inc.desc + "\n";
+      });
+    } else {
+      isi += "  Tidak ada insiden.\n";
+    }
+    if (insidenAktif.length > 0) {
+      isi += "  ⚡ Masih aktif: " + insidenAktif.map(i => i.title).join(", ") + "\n";
+    }
+    isi += "\n";
+
+    // 3. PAKET & KURIR
+    isi += "📦 PAKET & KURIR:\n";
+    if (paketMasukHari.length > 0) {
+      isi += "  Masuk hari ini (" + paketMasukHari.length + "):\n";
+      paketMasukHari.forEach(p => {
+        isi += "  - " + p.type + " untuk " + p.recipient + " dari " + (p.sender||"—") + " — " + fmtT(p.ts) + " — " + p.status + "\n";
+      });
+    } else {
+      isi += "  Tidak ada paket masuk.\n";
+    }
+    if (paketDiambilHari.length > 0) {
+      isi += "  Diambil/diantar (" + paketDiambilHari.length + "): " + paketDiambilHari.map(p=>p.recipient).join(", ") + "\n";
+    }
+    if (paketPending.length > 0) {
+      isi += "  ⏳ Belum diambil: " + paketPending.map(p=>p.recipient+" ("+p.type+")").join(", ") + "\n";
+    }
+    isi += "\n";
+
+    // 4. TAMU & PESERTA
+    isi += "🏠 TAMU & PESERTA:\n";
+    if (tamuMasukHari.length > 0) {
+      isi += "  Masuk hari ini (" + tamuMasukHari.length + "):\n";
+      tamuMasukHari.forEach(g => {
+        isi += "  - " + g.name + " (" + g.type + ")" + (g.institution ? " — " + g.institution : "") + (g.room ? " — " + g.room : "") + " — " + fmtT(g.ts) + "\n";
+        if (g.purpose) isi += "    Keperluan: " + g.purpose + "\n";
+      });
+    } else {
+      isi += "  Tidak ada tamu masuk.\n";
+    }
+    if (tamuKeluarHari.length > 0) {
+      isi += "  Keluar hari ini (" + tamuKeluarHari.length + "): " + tamuKeluarHari.map(g=>g.name).join(", ") + "\n";
+    }
+    if (tamuAda.length > 0) {
+      isi += "  ⏳ Masih di dalam (" + tamuAda.length + "): " + tamuAda.map(g=>g.name+(g.room?" ("+g.room+")":"")).join(", ") + "\n";
+    } else {
+      isi += "  Tidak ada tamu/peserta yang masih di dalam.\n";
+    }
+    isi += "\n";
+
+    // 5. STAND JAGA
+    const standHari = standJaga.filter(s => new Date(s.ts).toDateString() === today);
+    if (standHari.length > 0) {
+      isi += "\ud83d\udee1 STAND JAGA (" + standHari.length + "x):\n";
+      standHari.forEach(s => {
+        isi += "  - " + s.area + " \u2014 " + fmtT(s.ts) + " \u2014 " + (s.officer||"\u2014") + "\n";
+      });
+      isi += "\n";
+    }
+
+    // 6. ROLLING SHIFT
+    const rollingHari = rollings.filter(r => new Date(r.ts).toDateString() === today);
+    if (rollingHari.length > 0) {
+      isi += "\ud83d\udd04 ROLLING SHIFT (" + rollingHari.length + "x):\n";
+      rollingHari.forEach(r => {
+        isi += "  - Jam " + (r.time||fmtT(r.ts)) + " \u2014 Regu " + r.fromRegu + (r.toRegu ? " \u2192 Regu " + r.toRegu : "") + "\n";
+        if (r.notes) isi += "    Ket: " + r.notes + "\n";
+      });
+      isi += "\n";
+    }
+
+    // Ringkasan
+    isi += "\u2500\u2500\u2500 RINGKASAN \u2500\u2500\u2500\n";
+    isi += "Patroli: " + patrolHari.length + "x | Stand: " + standHari.length + "x | Insiden: " + insidenHari.length + " (" + insidenAktif.length + " aktif) | Paket: " + paketMasukHari.length + " masuk/" + paketPending.length + " pending | Tamu: " + tamuMasukHari.length + " masuk/" + tamuAda.length + " masih ada";
+
+    f("content", isi.trim());
+    f("incidents", insidenAktif.length > 0 ? insidenAktif.length + " aktif — " + insidenAktif.map(i=>i.title).join(", ") : "Tidak ada");
+    f("packages", paketPending.length > 0 ? paketPending.length + " belum diambil — " + paketPending.map(p=>p.recipient).join(", ") : "Tidak ada");
+    f("guests", tamuAda.length > 0 ? tamuAda.length + " orang — " + tamuAda.map(g=>g.name).join(", ") : "Tidak ada");
+    toast("Laporan lengkap berhasil diisi otomatis!");
+  };
+
   const submit=()=>{
     if(!fm.content){toast("Isi laporan!",false);return;}
     setMutations([...mutations,{...fm,photo,id:Date.now(),ts:Date.now()}]);
@@ -1203,7 +1329,12 @@ function MutTab({mutations,setMutations,reguHari,toast,canEdit}) {
   };
   return (
     <div>
-      <PH title="Serah Terima Mutasi" sub="Laporan pergantian shift antar regu" action={canEdit&&<Btn onClick={()=>setOpen(true)} color="#1d4ed8"><IC n="plus" s={13}/> Buat Mutasi</Btn>}/>
+      <PH title="Serah Terima Mutasi" sub="Laporan pergantian shift antar regu" action={canEdit&&(
+        <div style={{display:"flex",gap:7}}>
+          <Btn onClick={()=>{setOpen(true);setTimeout(buatAutoLaporan,100);}} color="#059669" size="sm">⚡ Auto</Btn>
+          <Btn onClick={()=>setOpen(true)} color="#1d4ed8"><IC n="plus" s={13}/> Buat Manual</Btn>
+        </div>
+      )}/>
       {!canEdit&&<ReadOnlyBanner reguHari={reguHari}/>}
       {mutations.length===0&&<div style={{color:"#9ca3af",fontSize:13}}>Belum ada mutasi.</div>}
       {[...mutations].reverse().map(m=>(
@@ -1234,8 +1365,16 @@ function MutTab({mutations,setMutations,reguHari,toast,canEdit}) {
         {printMut&&<MutPrint m={printMut} onClose={()=>setPrintMut(null)}/>}
       </Modal>
       <Modal open={open} onClose={()=>{setOpen(false);setPhoto(null);}} title="Buat Laporan Mutasi">
+        {/* Tombol auto-isi */}
+        <div style={{background:"#eff6ff",border:"1.5px solid #bfdbfe",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:700,color:"#1d4ed8"}}>⚡ Isi Otomatis</div>
+            <div style={{fontSize:10.5,color:"#6b7280"}}>Laporan terisi dari data patroli, insiden, paket & tamu hari ini</div>
+          </div>
+          <Btn onClick={buatAutoLaporan} color="#1d4ed8" size="sm">Isi Otomatis</Btn>
+        </div>
         <div style={{display:"flex",gap:10}}><Inp label="Dari Regu" value={fm.fromRegu} onChange={e=>f("fromRegu",e.target.value)} as="select" half>{[1,2,3].map(r=><option key={r} value={r}>Regu {r}</option>)}</Inp><Inp label="Kepada Regu" value={fm.toRegu} onChange={e=>f("toRegu",e.target.value)} as="select" half><option value="">— Pilih —</option>{[1,2,3].map(r=><option key={r} value={r}>Regu {r}</option>)}</Inp></div>
-        <Inp label="Laporan Kejadian" value={fm.content} onChange={e=>f("content",e.target.value)} as="textarea" placeholder="Semua kejadian penting selama shift..."/>
+        <Inp label="Laporan Kejadian" value={fm.content} onChange={e=>f("content",e.target.value)} as="textarea" placeholder="Klik 'Isi Otomatis' atau ketik manual..."/>
         <div style={{display:"flex",gap:10}}><Inp label="Insiden" value={fm.incidents} onChange={e=>f("incidents",e.target.value)} placeholder="Detail" half/><Inp label="Paket" value={fm.packages} onChange={e=>f("packages",e.target.value)} placeholder="Jumlah" half/><Inp label="Tamu" value={fm.guests} onChange={e=>f("guests",e.target.value)} placeholder="Nama" half/></div>
         <Inp label="Catatan Tambahan" value={fm.notes} onChange={e=>f("notes",e.target.value)} as="textarea" placeholder="Pesan untuk regu berikutnya..."/>
         <PhotoPicker photo={photo} setPhoto={setPhoto} label="📷 Foto Kondisi Laporan" color="#1d4ed8"/>
@@ -1293,7 +1432,7 @@ function LoginScreen({ onLogin, userPins }) {
         <div style={{ fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: 2 }}>SIPAMDAL</div>
         <div style={{ fontSize: 11, color: "rgba(255,255,255,.6)", letterSpacing: 1.5, marginTop: 3 }}>BBPKA II JATINANGOR</div>
         <div style={{ marginTop: 10, background: "rgba(255,255,255,.08)", borderRadius: 10, padding: "8px 16px", display: "inline-block" }}>
-          <div style={{ fontSize: 10, color: "rgba(255,255,255,.45)", letterSpacing: .5 }}>Sistem Informasi Pamdal</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,.45)", letterSpacing: .5 }}>Sistem Informasi Pengamanan Daerah</div>
           <div style={{ fontSize: 10.5, color: "rgba(255,255,255,.55)", marginTop: 3 }}>
             Dikembangkan oleh <span style={{ color: "#93c5fd", fontWeight: 700 }}>Rukman Abu Hamzah</span>
           </div>
@@ -1697,7 +1836,7 @@ function App() {
         {tab === "incident" && <IncTab incidents={incidents} setIncidents={setIncidents} posAssign={posAssign} toast={toast} canEdit={canEdit} />}
         {tab === "package" && <PkgTab packages={packages} setPackages={setPackages} toast={toast} canEdit={canEdit} />}
         {tab === "guest" && <GuestTab guests={guests} setGuests={setGuests} toast={toast} canEdit={canEdit} />}
-        {tab === "mutation" && <MutTab mutations={mutations} setMutations={setMutations} reguHari={reguHari} toast={toast} canEdit={canEdit} />}
+        {tab === "mutation" && <MutTab mutations={mutations} setMutations={setMutations} reguHari={reguHari} toast={toast} canEdit={canEdit} patrols={patrols} incidents={incidents} packages={packages} guests={guests} currentUser={currentUser} rollings={rollings} standJaga={standJaga} />}
         {tab === "profile" && <ProfileTab currentUser={currentUser} patrols={patrols} standJaga={standJaga} incidents={incidents} mutations={mutations} onLogout={handleLogout} toast={toast} userPins={userPins} setUserPins={setUserPins} />}
         {tab === "members" && <AdminMemberTab patrols={patrols} standJaga={standJaga} incidents={incidents} mutations={mutations} />}
       </main>
