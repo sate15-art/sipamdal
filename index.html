@@ -31,63 +31,79 @@
 <body>
 <div id="root"></div>
 
-<!-- Firebase SDK -->
+<!-- Firebase SDK — satu import bersih, tidak ada duplikat -->
 <script type="module" id="fb-init">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-  import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs, addDoc, serverTimestamp, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import {
+    getFirestore, enableIndexedDbPersistence,
+    collection, doc, setDoc, deleteDoc, onSnapshot,
+    getDocs, addDoc, serverTimestamp, query, orderBy, limit,
+    getDoc
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-  // ── Konfigurasi Firebase Project SIPAMDAL ──
   const firebaseConfig = {
     apiKey: "AIzaSyDq4WcKgbt5tNZh5wWghOjxCW38y5-siKo",
     authDomain: "sipamdal.firebaseapp.com",
     projectId: "sipamdal",
     storageBucket: "sipamdal.firebasestorage.app",
     messagingSenderId: "586437675903",
-    appId: "1:586437675903:web:5a1359dd13c8bd5014a84a",
-    measurementId: "G-4KVXZKKGBF"
+    appId: "1:586437675903:web:5a1359dd13c8bd5014a84a"
   };
 
   const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
+  const db  = getFirestore(app);
   const auth = getAuth(app);
 
-  // Auth anonim agar tetap bisa akses Firestore (identitas anggota dikelola di Firestore, bukan Firebase Auth)
+  // Auth anonim
   signInAnonymously(auth).catch(()=>{});
 
-  // Audit log helper — catat setiap aksi ke Firestore
+  // ── Audit log helper ──────────────────────────────────────────────────────────
   async function writeAuditLog(entry) {
     try {
       await addDoc(collection(db, "sipamdal_audit"), {
-        ...entry,
-        ts: serverTimestamp(),
-        tsLocal: new Date().toISOString(),
+        ...entry, ts: serverTimestamp(), tsLocal: new Date().toISOString()
       });
-    } catch(e) {
-      // Simpan ke antrian lokal jika offline
+    } catch {
       try {
         const q = JSON.parse(localStorage.getItem("audit_queue")||"[]");
         q.push({...entry, tsLocal: new Date().toISOString()});
         localStorage.setItem("audit_queue", JSON.stringify(q.slice(-50)));
-      } catch{}
+      } catch {}
     }
   }
 
-  // Flush antrian audit log offline saat kembali online
+  // Flush antrian saat kembali online
   window.addEventListener("online", async () => {
     try {
       const q = JSON.parse(localStorage.getItem("audit_queue")||"[]");
       if (!q.length) return;
-      for (const entry of q) {
-        await addDoc(collection(db, "sipamdal_audit"), { ...entry, ts: serverTimestamp(), flushed: true });
-      }
+      for (const entry of q)
+        await addDoc(collection(db, "sipamdal_audit"), {...entry, ts:serverTimestamp(), flushed:true});
       localStorage.removeItem("audit_queue");
-    } catch{}
+    } catch {}
   });
 
-  // Expose ke window
-  window.__FB = { db, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs, addDoc, serverTimestamp, query, orderBy, limit, writeAuditLog };
+  // ── Expose ke Babel script ────────────────────────────────────────────────────
+  window.__FB = { db, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, getDocs, addDoc, serverTimestamp, query, orderBy, limit, writeAuditLog };
+
+  // ── Signal ke React bahwa FB sudah siap + track koneksi ──────────────────────
+  // Gunakan onSnapshot ke doc kecil sebagai probe koneksi
+  const probe = doc(db, "sipamdal", "pad_pos");
+  let unsubProbe = null;
+  function startProbe() {
+    if (unsubProbe) return;
+    unsubProbe = onSnapshot(probe,
+      () => { window.__FB_ONLINE = true;  window.dispatchEvent(new Event("fb_online")); },
+      () => { window.__FB_ONLINE = false; window.dispatchEvent(new Event("fb_offline")); }
+    );
+  }
+  // Mulai probe setelah auth selesai
+  signInAnonymously(auth).then(startProbe).catch(startProbe);
+  window.addEventListener("offline", () => {
+    window.__FB_ONLINE = false;
+    window.dispatchEvent(new Event("fb_offline"));
+  });
 </script>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -2852,34 +2868,24 @@ function App() {
   const [fbOnline, setFbOnline] = useState(false);
   const inactiveTimer = useRef(null);
 
-  // ── Track status koneksi Firebase Firestore secara realtime ──
+  // ── Track status koneksi Firebase via custom event dari module script ──
   useEffect(() => {
-    // Tunggu __FB siap (Firebase module async)
-    let tries = 0;
-    const waitFB = setInterval(() => {
-      tries++;
-      if (window.__FB) {
-        clearInterval(waitFB);
-        const { db, doc, onSnapshot } = window.__FB;
-        // Firestore memiliki koleksi .info/connected layaknya RTDB — 
-        // cara terbaik: onSnapshot ke doc kecil, lihat apakah berhasil
-        try {
-          const ref = doc(db, "sipamdal", "pad_pos");
-          const unsub = onSnapshot(ref,
-            () => setFbOnline(true),
-            () => setFbOnline(false)
-          );
-          // Juga listen ke online/offline browser
-          const goOnline  = () => { if(window.__FB) setFbOnline(true); };
-          const goOffline = () => setFbOnline(false);
-          window.addEventListener("online",  goOnline);
-          window.addEventListener("offline", goOffline);
-          return () => { unsub(); window.removeEventListener("online",goOnline); window.removeEventListener("offline",goOffline); };
-        } catch(e) { setFbOnline(false); }
-      }
-      if (tries > 20) { clearInterval(waitFB); setFbOnline(false); }
-    }, 300);
-    return () => clearInterval(waitFB);
+    // Sync state awal dengan window.__FB_ONLINE (mungkin sudah di-set sebelum React mount)
+    if (window.__FB_ONLINE !== undefined) setFbOnline(window.__FB_ONLINE);
+
+    const onOnline  = () => setFbOnline(true);
+    const onOffline = () => setFbOnline(false);
+    window.addEventListener("fb_online",  onOnline);
+    window.addEventListener("fb_offline", onOffline);
+    // Fallback: cek setiap 5 detik
+    const poll = setInterval(() => {
+      if (window.__FB_ONLINE !== undefined) setFbOnline(window.__FB_ONLINE);
+    }, 5000);
+    return () => {
+      window.removeEventListener("fb_online",  onOnline);
+      window.removeEventListener("fb_offline", onOffline);
+      clearInterval(poll);
+    };
   }, []);
   const AUTO_LOGOUT_MS = 15 * 60 * 1000; // 15 menit
 
