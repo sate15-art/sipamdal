@@ -2849,7 +2849,38 @@ function App() {
   const [tab, setTab] = useState("dashboard");
   const [now, setNow] = useState(new Date());
   const [moreOpen, setMoreOpen] = useState(false);
+  const [fbOnline, setFbOnline] = useState(false);
   const inactiveTimer = useRef(null);
+
+  // ── Track status koneksi Firebase Firestore secara realtime ──
+  useEffect(() => {
+    // Tunggu __FB siap (Firebase module async)
+    let tries = 0;
+    const waitFB = setInterval(() => {
+      tries++;
+      if (window.__FB) {
+        clearInterval(waitFB);
+        const { db, doc, onSnapshot } = window.__FB;
+        // Firestore memiliki koleksi .info/connected layaknya RTDB — 
+        // cara terbaik: onSnapshot ke doc kecil, lihat apakah berhasil
+        try {
+          const ref = doc(db, "sipamdal", "pad_pos");
+          const unsub = onSnapshot(ref,
+            () => setFbOnline(true),
+            () => setFbOnline(false)
+          );
+          // Juga listen ke online/offline browser
+          const goOnline  = () => { if(window.__FB) setFbOnline(true); };
+          const goOffline = () => setFbOnline(false);
+          window.addEventListener("online",  goOnline);
+          window.addEventListener("offline", goOffline);
+          return () => { unsub(); window.removeEventListener("online",goOnline); window.removeEventListener("offline",goOffline); };
+        } catch(e) { setFbOnline(false); }
+      }
+      if (tries > 20) { clearInterval(waitFB); setFbOnline(false); }
+    }, 300);
+    return () => clearInterval(waitFB);
+  }, []);
   const AUTO_LOGOUT_MS = 15 * 60 * 1000; // 15 menit
 
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id); }, []);
@@ -2941,7 +2972,7 @@ function App() {
         {activeI > 0 && <div style={{ background: "#ef4444", color: "#fff", borderRadius: 20, padding: "2px 8px", fontSize: 10.5, fontWeight: 800 }}>⚠{activeI}</div>}
         <div style={{ textAlign: "right", cursor: "pointer" }} onClick={() => goTab("profile")}>
           <div style={{ fontSize: 11, fontWeight: 800, color: "#fff" }}>{currentUser.name}</div>
-          <div style={{ fontSize: 8.5, color: "rgba(255,255,255,.55)" }}>{fmtDS(now)} · {isAdmin ? "Admin" : `Regu ${reguHari}`} · {window.__FB ? <span style={{color:"#86efac"}}>●</span> : <span style={{color:"#fca5a5"}}>○</span>}</div>
+          <div style={{ fontSize: 8.5, color: "rgba(255,255,255,.55)" }}>{fmtDS(now)} · {isAdmin ? "Admin" : `Regu ${reguHari}`} · <span style={{color:fbOnline?"#86efac":"#fca5a5",fontSize:10,transition:"color .5s"}}>●</span></div>
         </div>
       </header>
 
