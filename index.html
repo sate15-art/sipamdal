@@ -633,7 +633,7 @@ function CamScanner({onScan,onClose,customDecode}) {
         .catch(()=>{ if(st.active) st.raf=requestAnimationFrame(decodeFrame); });
     } else if(window.jsQR){
       const img=ctx.getImageData(0,0,W,H);
-      const code=window.jsQR(img.data,W,H,{inversionAttempts:"dontInvert"});
+      const code=window.jsQR(img.data,W,H,{inversionAttempts:"attemptBoth"});
       if(!code||!tryResult(code.data)){
         if(st.active) st.raf=requestAnimationFrame(decodeFrame);
       }
@@ -1406,10 +1406,13 @@ function PatrolTab({posAssign,patrols,setPatrols,toast,canEdit,isAdmin,currentUs
 
   const onScan=(area)=>{
     setScanOpen(false);
-    // Blok diam-diam jika area di-scan < 1 menit lalu
+    // Blok jika area di-scan < 1 menit lalu
     const now = Date.now();
     const lastScan = patrols.filter(p=>p.areas?.includes(area)).at(-1);
-    if (lastScan && (now - lastScan.ts) < 60000) return;
+    if (lastScan && (now - lastScan.ts) < 60000) {
+      toast(`⏳ ${area} baru discan ${Math.ceil((now-lastScan.ts)/1000)} detik lalu, tunggu sebentar!`, false);
+      return;
+    }
     const pos=getPos(area);
     setConfirm({area,pos:pos||"—",isManual:false});
     setOfficer(currentUser?.name||posAssign[pos]?.join(", ")||"");
