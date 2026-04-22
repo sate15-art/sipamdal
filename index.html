@@ -184,6 +184,29 @@
       .print-modal { position: static !important; background: white !important; padding: 0 !important; }
       nav, header { display: none !important; }
     }
+
+    /* ── Page transition ─────────────────────────────────────────── */
+    @keyframes tabEnter {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .tab-view {
+      animation: tabEnter .22s cubic-bezier(.22,1,.36,1) both;
+    }
+
+    /* ── Keluar badge pulse ─────────────────────────────────────── */
+    @keyframes badgePulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(251,146,60,.6); }
+      50%      { box-shadow: 0 0 0 6px rgba(251,146,60,.0); }
+    }
+    .badge-keluar { animation: badgePulse 2s ease-in-out infinite; }
+
+    /* ── Keluar card slide-in ───────────────────────────────────── */
+    @keyframes cardSlideIn {
+      from { opacity: 0; transform: translateX(-14px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    .keluar-card { animation: cardSlideIn .25s ease both; }
   </style>
 </head>
 <body>
@@ -521,107 +544,213 @@ function Btn({children,onClick,color="var(--accent)",size="md",variant="solid",d
 
 // ─── CAMERA QR SCANNER ────────────────────────────────────────────────────────
 function CamScanner({onScan,onClose,customDecode}) {
-  const vRef=useRef(), cRef=useRef(), streamRef=useRef(), animRef=useRef();
-  const [err,setErr]=useState(null);
-  const [live,setLive]=useState(false);
-  const [hit,setHit]=useState(null);
-  const hasBD=typeof window!=="undefined"&&!!window.BarcodeDetector;
+  const vRef      = useRef(null);
+  const cRef      = useRef(null);
+  const stateRef  = useRef({ stream:null, raf:null, active:false, done:false });
+  const cbRef     = useRef({ onScan, customDecode });
+  cbRef.current   = { onScan, customDecode };
 
-  const stop=useCallback(()=>{
-    streamRef.current?.getTracks().forEach(t=>t.stop()); streamRef.current=null;
-    if(animRef.current) cancelAnimationFrame(animRef.current);
-    setLive(false);
+  const [status, setStatus] = useState("idle"); // idle | starting | live | hit | err
+  const [hitText, setHitText] = useState("");
+  const [errMsg,  setErrMsg]  = useState("");
+  const [jsReady, setJsReady] = useState(!!window.jsQR);
+
+  /* ── muat jsQR jika perlu ─────────────────────────────────── */
+  useEffect(()=>{
+    if(window.BarcodeDetector||window.jsQR){setJsReady(true);return;}
+    const sc=document.createElement("script");
+    sc.src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
+    sc.onload=()=>{setJsReady(true);};
+    document.head.appendChild(sc);
   },[]);
 
-  const decode=useCallback((raw)=>{
-    // Gunakan customDecode jika ada (untuk Pos), fallback ke decode area patroli
-    if(customDecode) return customDecode(raw);
-    return decQR(raw)||ALL_AREAS.find(a=>raw.includes(a))||null;
-  },[customDecode]);
+  /* ── hard stop: matikan stream + batalkan RAF ─────────────── */
+  const hardStop = useCallback(()=>{
+    const st = stateRef.current;
+    st.active = false;
+    if(st.raf){ cancelAnimationFrame(st.raf); st.raf=null; }
+    if(st.stream){ st.stream.getTracks().forEach(t=>t.stop()); st.stream=null; }
+    if(vRef.current){ vRef.current.srcObject=null; }
+    setStatus(s=> s==="live"||s==="starting" ? "idle" : s);
+  },[]);
 
-  const scan=useCallback(()=>{
-    const v=vRef.current,c=cRef.current;
-    if(!v||!c||v.readyState<2){animRef.current=requestAnimationFrame(scan);return;}
-    const ctx=c.getContext("2d");
-    c.width=v.videoWidth||320; c.height=v.videoHeight||240;
-    ctx.drawImage(v,0,0);
+  /* ── decode satu frame ────────────────────────────────────── */
+  const decodeFrame = useCallback(()=>{
+    const st = stateRef.current;
+    if(!st.active||st.done) return;
+
+    const v=vRef.current, c=cRef.current;
+    if(!v||!c||v.readyState<2){ st.raf=requestAnimationFrame(decodeFrame); return; }
+
+    const W=v.videoWidth||320, H=v.videoHeight||240;
+    if(c.width!==W) c.width=W;
+    if(c.height!==H) c.height=H;
+    const ctx=c.getContext("2d",{willReadFrequently:true});
+    ctx.drawImage(v,0,0,W,H);
+
+    const tryResult=(raw)=>{
+      if(!raw||st.done) return false;
+      const {customDecode:cd}=cbRef.current;
+      const result = cd ? cd(raw) : (decQR(raw)||ALL_AREAS.find(a=>raw.includes(a))||null);
+      if(!result) return false;
+      st.done=true; st.active=false;
+      if(st.raf){cancelAnimationFrame(st.raf);st.raf=null;}
+      // jangan matikan stream dulu — biarkan terlihat saat hit
+      setHitText(result);
+      setStatus("hit");
+      setTimeout(()=>{
+        hardStop();
+        cbRef.current.onScan(result);
+      },500);
+      return true;
+    };
+
     if(window.BarcodeDetector){
-      new window.BarcodeDetector({formats:["qr_code"]}).detect(c).then(bs=>{
-        if(bs.length){
-          const result=decode(bs[0].rawValue);
-          if(result){setHit(result);stop();setTimeout(()=>onScan(result),400);return;}
-        }
-        animRef.current=requestAnimationFrame(scan);
-      }).catch(()=>{animRef.current=requestAnimationFrame(scan);});
-    } else { animRef.current=requestAnimationFrame(scan); }
-  },[onScan,stop,decode]);
+      new window.BarcodeDetector({formats:["qr_code"]}).detect(c)
+        .then(bs=>{ if(!bs.length||!tryResult(bs[0].rawValue)) { if(st.active) st.raf=requestAnimationFrame(decodeFrame); } })
+        .catch(()=>{ if(st.active) st.raf=requestAnimationFrame(decodeFrame); });
+    } else if(window.jsQR){
+      const img=ctx.getImageData(0,0,W,H);
+      const code=window.jsQR(img.data,W,H,{inversionAttempts:"dontInvert"});
+      if(!code||!tryResult(code.data)){
+        if(st.active) st.raf=requestAnimationFrame(decodeFrame);
+      }
+    } else {
+      if(st.active) st.raf=requestAnimationFrame(decodeFrame);
+    }
+  },[hardStop]);
 
-  const startScan=useCallback(()=>{
-    if(animRef.current) cancelAnimationFrame(animRef.current);
-    animRef.current=requestAnimationFrame(scan);
-  },[scan]);
-
-  const start=async()=>{
-    setErr(null); setHit(null);
+  /* ── mulai kamera ─────────────────────────────────────────── */
+  const start = useCallback(async()=>{
+    const st=stateRef.current;
+    if(st.stream||st.active) return;
+    setStatus("starting"); setErrMsg(""); setHitText("");
+    st.done=false; st.active=false;
     try{
-      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}});
-      streamRef.current=s;
-      const v=vRef.current; v.srcObject=s;
-      // Pasang handler SEBELUM play() untuk hindari race condition
-      v.onloadedmetadata=()=>{ v.play().then(()=>{ setLive(true); startScan(); }).catch(()=>{}); };
-      // Fallback jika metadata sudah loaded
-      if(v.readyState>=1){ v.play().then(()=>{ setLive(true); startScan(); }).catch(()=>{}); }
-    }catch(e){setErr("Kamera tidak dapat diakses. Pastikan izin kamera diberikan.");}
-  };
+      const stream=await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}}
+      });
+      st.stream=stream;
+      const v=vRef.current;
+      if(!v){stream.getTracks().forEach(t=>t.stop());st.stream=null;return;}
+      v.srcObject=stream;
+      const go=()=>{
+        v.play().then(()=>{
+          st.active=true;
+          setStatus("live");
+          st.raf=requestAnimationFrame(decodeFrame);
+        }).catch(()=>{});
+      };
+      if(v.readyState>=1) go(); else v.onloadedmetadata=go;
+    }catch(e){
+      setStatus("err");
+      setErrMsg("Kamera tidak dapat diakses. Pastikan izin kamera diberikan.");
+    }
+  },[decodeFrame]);
 
-  useEffect(()=>{ start(); return()=>stop(); },[]);
+  /* ── mount: mulai otomatis; unmount: selalu stop ─────────── */
+  useEffect(()=>{
+    start();
+    return ()=>{ stateRef.current.done=true; hardStop(); };
+  },[]);   // eslint-disable-line
+
+  const handleManual=(val)=>{ hardStop(); cbRef.current.onScan(val); };
+
+  const isLive   = status==="live";
+  const isHit    = status==="hit";
+  const isErr    = status==="err";
+  const isStart  = status==="starting"||status==="idle";
+  const hasBD    = !!window.BarcodeDetector;
 
   return (
     <div>
-      <div style={{position:"relative",background:"var(--card-solid)",minHeight:240,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-        <video ref={vRef} style={{width:"100%",maxHeight:260,objectFit:"cover",display:live?"block":"none"}} playsInline muted/>
+      {/* Viewfinder */}
+      <div style={{position:"relative",background:"#000",minHeight:240,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+        <video ref={vRef} style={{width:"100%",maxHeight:270,objectFit:"cover",display:(isLive||isHit)?"block":"none"}} playsInline muted/>
         <canvas ref={cRef} style={{display:"none"}}/>
-        {live&&(
+
+        {/* Overlay + scanning line */}
+        {isLive&&(
           <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-            <div style={{width:190,height:190,border:"2px solid var(--accent)",borderRadius:14,boxShadow:"0 0 0 9999px rgba(0,0,0,.5)",position:"relative"}}>
-              <div style={{position:"absolute",top:"50%",left:0,right:0,height:2,background:"linear-gradient(90deg,transparent,var(--accent-light),transparent)",animation:"sl 2s ease-in-out infinite"}}/>
+            <div style={{width:200,height:200,position:"relative"}}>
+              {/* Sudut bingkai */}
+              {[["0%","0%","0","0"],["0%","auto","0","0"],["auto","0%","0","0"],["auto","auto","0","0"]].map(([t,b,r,l],i)=>(
+                <div key={i} style={{position:"absolute",top:t,bottom:b,right:r,left:l,width:28,height:28,
+                  borderTop:t==="0%"?"3px solid var(--accent-light)":"none",
+                  borderBottom:b==="0%"?"3px solid var(--accent-light)":"none",
+                  borderLeft:l==="0%"?"3px solid var(--accent-light)":"none",
+                  borderRight:r==="0%"?"3px solid var(--accent-light)":"none",
+                  borderRadius:i===0?"8px 0 0 0":i===1?"0 0 0 8px":i===2?"0 8px 0 0":"0 0 8px 0"
+                }}/>
+              ))}
+              {/* Garis scan */}
+              <div style={{position:"absolute",left:4,right:4,height:2,background:"var(--accent-light)",opacity:.85,animation:"sl 1.8s ease-in-out infinite"}}/>
+              {/* Area gelap di luar bingkai */}
+              <div style={{position:"absolute",inset:-9999,boxShadow:"inset 0 0 0 9999px rgba(0,0,0,.55)",pointerEvents:"none"}}/>
             </div>
           </div>
         )}
-        {hit&&<div style={{position:"absolute",bottom:12,left:"50%",transform:"translateX(-50%)",background:"var(--ok)",color:"#fff",borderRadius:8,padding:"8px 18px",fontWeight:700,fontSize:14,whiteSpace:"nowrap"}}>✓ {hit}</div>}
-        {!live&&!hit&&!err&&<div style={{textAlign:"center",color:"var(--tx2)",padding:24}}><IC n="cam" s={44} c="var(--accent-light)"/><div style={{marginTop:10,fontSize:13}}>Memulai kamera...</div></div>}
+
+        {/* Hit */}
+        {isHit&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.5)"}}>
+          <div style={{background:"var(--ok)",color:"#fff",borderRadius:12,padding:"14px 24px",fontWeight:800,fontSize:15,textAlign:"center"}}>
+            <div style={{fontSize:28,marginBottom:6}}>✓</div>{hitText}
+          </div>
+        </div>}
+
+        {/* Starting / idle */}
+        {isStart&&<div style={{textAlign:"center",color:"#fff",padding:28}}>
+          <IC n="cam" s={44} c="var(--accent-light)"/>
+          <div style={{marginTop:10,fontSize:13}}>{status==="starting"?"Memulai kamera...":"Kamera siap"}</div>
+        </div>}
+
+        {/* Error */}
+        {isErr&&<div style={{textAlign:"center",color:"#fca5a5",padding:24,fontSize:12.5}}>
+          <div style={{fontSize:30,marginBottom:8}}>📵</div>{errMsg}
+        </div>}
       </div>
-      <div style={{padding:"14px 18px 18px"}}>
-        {!hasBD&&live&&<div style={{background:"rgba(255,204,0,.07)",border:"1px solid #fbbf24",borderRadius:9,padding:"9px 13px",marginBottom:10,fontSize:12.5,color:"#ffcc00"}}>⚠ Browser ini belum mendukung scan otomatis. Pilih dari daftar di bawah.</div>}
-        {err&&<div style={{background:"rgba(255,50,50,.1)",border:"1px solid #fca5a5",borderRadius:9,padding:"9px 13px",marginBottom:10,fontSize:12.5,color:"var(--r)"}}>{err}</div>}
-        <div style={{fontSize:11.5,fontWeight:700,color:"var(--accent-light)",marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>Atau pilih manual:</div>
-        <div style={{maxHeight:210,overflowY:"auto",display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+
+      {/* Info + manual */}
+      <div style={{padding:"12px 16px 16px"}}>
+        {/* Status decoder */}
+        {isLive&&!hasBD&&(
+          jsReady
+            ? <div style={{background:"rgba(74,222,128,.08)",border:"1px solid #86efac",borderRadius:8,padding:"7px 12px",marginBottom:10,fontSize:12,color:"var(--ok)"}}>✓ Decoder aktif — arahkan kamera ke QR code</div>
+            : <div style={{background:"rgba(255,204,0,.08)",border:"1px solid #fbbf24",borderRadius:8,padding:"7px 12px",marginBottom:10,fontSize:12,color:"#ffcc00"}}>⏳ Memuat decoder QR...</div>
+        )}
+
+        {/* Pilih manual */}
+        <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:7,textTransform:"uppercase",letterSpacing:.5}}>Pilih manual:</div>
+        <div style={{maxHeight:200,overflowY:"auto",display:"flex",flexDirection:"column",gap:5,marginBottom:12}}>
           {customDecode
-            ? /* Mode Pos — tampilkan daftar POS_LIST */
-              POS_LIST.map(pos=>(
-                <button key={pos} onClick={()=>{stop();onScan(pos);}} style={{background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--accent-light)",fontSize:13,fontWeight:600,padding:"10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+            ? POS_LIST.map(pos=>(
+                <button key={pos} onClick={()=>handleManual(pos)} style={{background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--accent-light)",fontSize:13,fontWeight:600,padding:"10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
                   📍 {pos}
                 </button>
               ))
-            : /* Mode Patroli/Stand — tampilkan area per pos */
-              Object.entries(PATROL_AREAS).map(([pos,areas])=>(
+            : Object.entries(PATROL_AREAS).map(([pos,areas])=>(
                 <div key={pos}>
-                  <div style={{fontSize:10.5,color:"var(--tx3)",fontWeight:700,padding:"3px 0 2px",textTransform:"uppercase",letterSpacing:.5}}>{pos}</div>
+                  <div style={{fontSize:10,color:"var(--tx3)",fontWeight:700,padding:"3px 0 2px",textTransform:"uppercase",letterSpacing:.5}}>{pos}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>
                     {areas.map(a=>(
-                      <button key={a} onClick={()=>{stop();onScan(a);}} style={{background:"var(--card2)",border:"1px solid var(--border)",borderRadius:7,color:"var(--accent-light)",fontSize:12,fontWeight:600,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit"}}>{a}</button>
+                      <button key={a} onClick={()=>handleManual(a)} style={{background:"var(--card2)",border:"1px solid var(--border)",borderRadius:7,color:"var(--accent-light)",fontSize:12,fontWeight:600,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit"}}>{a}</button>
                     ))}
                   </div>
                 </div>
               ))
           }
         </div>
+
+        {/* Tombol */}
         <div style={{display:"flex",gap:8}}>
-          {live?<Btn onClick={stop} color="var(--tx4)" variant="outline">Stop Kamera</Btn>:<Btn onClick={start} color="var(--accent)"><IC n="cam" s={13}/> Aktifkan</Btn>}
-          <Btn onClick={()=>{stop();onClose();}} color="var(--tx4)" variant="outline">Tutup</Btn>
+          {isLive
+            ? <Btn onClick={hardStop} color="var(--tx4)" variant="outline">⏹ Stop Kamera</Btn>
+            : <Btn onClick={start} color="var(--accent)"><IC n="cam" s={13}/> Aktifkan</Btn>
+          }
+          <Btn onClick={()=>{hardStop();onClose();}} color="var(--tx4)" variant="outline">Tutup</Btn>
         </div>
       </div>
-      <style>{`@keyframes sl{0%,100%{transform:translateY(-70px)}50%{transform:translateY(70px)}}`}</style>
+      <style>{`@keyframes sl{0%,100%{transform:translateY(-80px)}50%{transform:translateY(80px)}}`}</style>
     </div>
   );
 }
@@ -3785,6 +3914,169 @@ function SearchTab({ packages, guests, mutations, incidents, patrols }) {
   );
 }
 
+// ─── KELUAR SEMENTARA ────────────────────────────────────────────────────────
+function KeluarTab({ keluarData, setKeluarData, toast, canEdit, isAdmin, now }) {
+  const [open, setOpen] = useState(false);
+  const [fm, setFm] = useState({ nama:"", tujuan:"Makan Malam", keterangan:"", estimasi:"" });
+  const f = (k,v) => setFm(p=>({...p,[k]:v}));
+
+  const TUJUAN_LIST = ["Makan Malam","Makan Siang","Hiburan / Jalan-jalan","Warung Kopi","Minimarket","Lainnya"];
+  const TUJUAN_ICON = {"Makan Malam":"🍽","Makan Siang":"🍱","Hiburan / Jalan-jalan":"🎭","Warung Kopi":"☕","Minimarket":"🏪","Lainnya":"📍"};
+
+  const sedangDiLuar = keluarData.filter(k => !k.kembali);
+  const sudahKembali = keluarData.filter(k => k.kembali);
+
+  const submit = () => {
+    if (!fm.nama.trim()) { toast("Nama peserta wajib diisi!", false); return; }
+    const entry = { ...fm, id: Date.now(), tsKeluar: Date.now(), kembali: null, tsKembali: null };
+    setKeluarData([...keluarData, entry]);
+    setFm({ nama:"", tujuan:"Makan Malam", keterangan:"", estimasi:"" });
+    setOpen(false);
+    toast(`${fm.nama} dicatat keluar — ${fm.tujuan}`);
+  };
+
+  const tandaiKembali = (id) => {
+    if (!canEdit && !isAdmin) { toast("Tidak bisa edit", false); return; }
+    setKeluarData(keluarData.map(k => k.id === id ? { ...k, kembali: true, tsKembali: Date.now() } : k));
+    const item = keluarData.find(k => k.id === id);
+    toast(`${item?.nama} sudah kembali ✓`);
+  };
+
+  const hapus = (id) => {
+    if (!isAdmin) { toast("Hanya admin yang bisa hapus", false); return; }
+    setKeluarData(keluarData.filter(k => k.id !== id));
+    toast("Data dihapus");
+  };
+
+  // Hitung durasi keluar
+  const durasi = (tsKeluar) => {
+    const mnt = Math.floor((now - new Date(tsKeluar)) / 60000);
+    if (mnt < 60) return `${mnt} menit`;
+    return `${Math.floor(mnt/60)}j ${mnt%60}m`;
+  };
+
+  return (
+    <div>
+      <PH title="Peserta Keluar Sementara" sub="Catat peserta yang keluar malam/sore hari"
+        action={canEdit && (
+          <Btn onClick={() => setOpen(true)} color="var(--y)" sx={{color:"#1a1a1a"}}>
+            <IC n="plus" s={13}/> Catat Keluar
+          </Btn>
+        )}
+      />
+      {!canEdit && !isAdmin && <ReadOnlyBanner reguHari={getReguHari(new Date())}/>}
+
+      {/* Summary card */}
+      <div style={{display:"flex",gap:10,marginBottom:14}}>
+        <div className="badge-keluar" style={{background:"rgba(251,146,60,.12)",border:"1.5px solid rgba(251,146,60,.5)",borderRadius:12,padding:"12px 16px",flex:1,textAlign:"center"}}>
+          <div style={{fontSize:32,fontWeight:900,color:"#fb923c"}}>{sedangDiLuar.length}</div>
+          <div style={{fontSize:11,color:"#fb923c",fontWeight:700}}>Sedang di Luar</div>
+        </div>
+        <div style={{background:"var(--green-card)",border:"1.5px solid var(--green-border)",borderRadius:12,padding:"12px 16px",flex:1,textAlign:"center"}}>
+          <div style={{fontSize:32,fontWeight:900,color:"var(--ok)"}}>{sudahKembali.length}</div>
+          <div style={{fontSize:11,color:"var(--ok)",fontWeight:700}}>Sudah Kembali</div>
+        </div>
+      </div>
+
+      {/* Sedang di luar */}
+      {sedangDiLuar.length > 0 && (
+        <>
+          <div style={{fontSize:12,fontWeight:800,color:"#fb923c",marginBottom:8}}>
+            🚶 Sedang di Luar ({sedangDiLuar.length} orang)
+          </div>
+          {sedangDiLuar.map((k, idx) => (
+            <div key={k.id} className="keluar-card" style={{
+              background:"rgba(251,146,60,.07)",
+              border:"1.5px solid rgba(251,146,60,.35)",
+              borderRadius:12, padding:"12px 14px", marginBottom:9,
+              animationDelay: `${idx*0.05}s`
+            }}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:5}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:800,color:"var(--tx)"}}>{k.nama}</div>
+                  <div style={{fontSize:12,color:"#fb923c",fontWeight:600,marginTop:2}}>
+                    {TUJUAN_ICON[k.tujuan]||"📍"} {k.tujuan}
+                  </div>
+                  {k.keterangan && <div style={{fontSize:11,color:"var(--tx3)",marginTop:2}}>📝 {k.keterangan}</div>}
+                  {k.estimasi && <div style={{fontSize:11,color:"#fb923c",marginTop:2}}>⏰ Estimasi kembali: {k.estimasi}</div>}
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:10.5,color:"var(--tx3)"}}>Keluar {fmtT(k.tsKeluar)}</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#fb923c",marginTop:3}}>⏱ {durasi(k.tsKeluar)}</div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:7,marginTop:8}}>
+                {(canEdit || isAdmin) && (
+                  <Btn onClick={() => tandaiKembali(k.id)} color="var(--ok)" size="sm">
+                    <IC n="ok" s={12}/> Sudah Kembali
+                  </Btn>
+                )}
+                {isAdmin && (
+                  <Btn onClick={() => hapus(k.id)} color="var(--r)" size="sm" variant="outline">Hapus</Btn>
+                )}
+              </div>
+            </div>
+          ))}
+          <div style={{borderTop:"1px solid var(--border2)",margin:"14px 0"}}/>
+        </>
+      )}
+
+      {/* Sudah kembali */}
+      {sudahKembali.length > 0 && (
+        <>
+          <div style={{fontSize:12,fontWeight:700,color:"var(--tx3)",marginBottom:8}}>
+            ✅ Sudah Kembali ({sudahKembali.length})
+          </div>
+          {[...sudahKembali].reverse().map(k => (
+            <div key={k.id} style={{
+              background:"var(--card-solid)",border:"1px solid var(--border)",
+              borderRadius:10,padding:"10px 13px",marginBottom:7
+            }}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:"var(--tx2)"}}>{k.nama}</div>
+                  <div style={{fontSize:11,color:"var(--tx4)"}}>{TUJUAN_ICON[k.tujuan]||"📍"} {k.tujuan}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:10,color:"var(--tx4)"}}>Keluar {fmtT(k.tsKeluar)}</div>
+                  <div style={{fontSize:10.5,color:"var(--ok)",fontWeight:700}}>
+                    ✓ Kembali {fmtT(k.tsKembali)}
+                  </div>
+                  {isAdmin && (
+                    <button onClick={() => hapus(k.id)} style={{marginTop:4,background:"none",border:"none",fontSize:10,color:"var(--tx4)",cursor:"pointer",fontFamily:"inherit"}}>Hapus</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {keluarData.length === 0 && (
+        <div style={{textAlign:"center",padding:"40px 20px",color:"var(--tx3)"}}>
+          <div style={{fontSize:40,marginBottom:10}}>🚶</div>
+          <div style={{fontSize:13,fontWeight:600}}>Belum ada peserta yang keluar.</div>
+          <div style={{fontSize:11,marginTop:4}}>Catat peserta yang keluar sore/malam untuk ketertiban.</div>
+        </div>
+      )}
+
+      {/* Modal catat keluar */}
+      <Modal open={open} onClose={() => setOpen(false)} title="Catat Peserta Keluar">
+        <Inp label="Nama Peserta" value={fm.nama} onChange={e=>f("nama",e.target.value)} placeholder="Nama lengkap peserta"/>
+        <Inp label="Tujuan" value={fm.tujuan} onChange={e=>f("tujuan",e.target.value)} as="select">
+          {TUJUAN_LIST.map(t => <option key={t}>{t}</option>)}
+        </Inp>
+        <Inp label="Keterangan (opsional)" value={fm.keterangan} onChange={e=>f("keterangan",e.target.value)} placeholder="Mis: makan di warteg dekat gerbang"/>
+        <Inp label="Estimasi Kembali (opsional)" value={fm.estimasi} onChange={e=>f("estimasi",e.target.value)} placeholder="Contoh: 21:30 / 1 jam lagi"/>
+        <div style={{display:"flex",gap:8}}>
+          <Btn onClick={submit} color="var(--y)" sx={{color:"#1a1a1a"}} size="lg">Simpan</Btn>
+          <Btn onClick={() => setOpen(false)} color="var(--tx4)" variant="outline" size="lg">Batal</Btn>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
 const NAV_TABS = [
   {id:"dashboard",label:"Dashboard",icon:"home"},
   {id:"search",label:"Cari",icon:"search"},
@@ -3808,6 +4100,7 @@ function App() {
   const [currentUser, setCurrentUser] = useLS("pad_user", null);
   const [userPins, setUserPins] = useLS("pad_pins", DEFAULT_PINS);
   const [tab, setTab] = useState("dashboard");
+  const [tabKey, setTabKey] = useState(0);
   const [now, setNow] = useState(new Date());
   const [moreOpen, setMoreOpen] = useState(false);
   const [fbOnline, setFbOnline] = useState(false);
@@ -3900,6 +4193,7 @@ function App() {
   const [instruksi, setInstruksi] = useData("pad_instruksi", []);
   const [inventarisDaftar, setInventarisDaftar] = useData("pad_inv_daftar", DEFAULT_INVENTARIS);
   const [inventarisCek, setInventarisCek] = useData("pad_inv_cek", {});
+  const [keluarData, setKeluarData] = useData("pad_keluar", []);
   const [notif, setNotif] = useState(null);
 
   const toast = (msg, ok = true) => { setNotif({ msg, ok }); setTimeout(() => setNotif(null), 3000); };
@@ -3926,6 +4220,7 @@ function App() {
     { id: "absen", label: "Absensi", icon: "cal" },
     { id: "package", label: "Paket & Kurir", icon: "pkg" },
     { id: "guest", label: "Tamu & Asrama", icon: "ppl" },
+    { id: "keluar", label: "Peserta Keluar", icon: "ppl" },
     { id: "mutation", label: "Mutasi Laporan", icon: "file" },
     { id: "inventaris", label: "Inventaris Barang", icon: "pkg" },
     { id: "profile", label: isAdmin ? "Admin" : "Profil Saya", icon: "ppl" },
@@ -3934,8 +4229,9 @@ function App() {
   const pending = packages.filter(p => p.status === "Belum Diambil").length;
   const activeI = incidents.filter(i => i.status !== "Selesai").length;
   const instruksiAktif = instruksi.filter(i => i.aktif && (i.targetRegu==="Semua"||String(i.targetRegu)===String(currentUser?.regu))).length;
+  const keluarDiLuar = keluarData.filter(k => !k.kembali).length;
 
-  const goTab = (t) => { setTab(t); setMoreOpen(false); };
+  const goTab = (t) => { setTab(t); setTabKey(k=>k+1); setMoreOpen(false); };
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--dk)", fontFamily: "'Plus Jakarta Sans','Segoe UI Variable','Segoe UI',system-ui,sans-serif", display: "flex", flexDirection: "column", paddingBottom: 64, transition: "background .25s" }}>
@@ -3961,6 +4257,7 @@ function App() {
           </button>
         </div>
         {pending > 0 && <div style={{ background: "var(--y)", color: "#1a1a1a", borderRadius: 20, padding: "2px 8px", fontSize: 10.5, fontWeight: 700 }}>📦{pending}</div>}
+        {keluarDiLuar > 0 && <div className="badge-keluar" onClick={()=>goTab("keluar")} style={{ background: "rgba(251,146,60,.9)", color: "#fff", borderRadius: 20, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor:"pointer" }}>🚶{keluarDiLuar}</div>}
         {instruksiAktif > 0 && <div style={{ background: "var(--r)", color: "#fff", borderRadius: 20, padding: "2px 8px", fontSize: 10.5, fontWeight: 700, cursor:"pointer" }} onClick={()=>setTab("instruksi")}>📋{instruksiAktif}</div>}
         {activeI > 0 && <div style={{ background: "var(--r)", color: "#fff", borderRadius: 20, padding: "2px 8px", fontSize: 10.5, fontWeight: 700 }}>⚠{activeI}</div>}
         <div style={{ textAlign: "right", cursor: "pointer" }} onClick={() => goTab("profile")}>
@@ -3991,6 +4288,7 @@ function App() {
 
       {/* CONTENT */}
       <main style={{ flex: 1, padding: "14px 14px 0", overflowY: "auto" }}>
+        <div key={tabKey} className="tab-view">
         {tab === "search" && <SearchTab packages={packages} guests={guests} mutations={mutations} incidents={incidents} patrols={patrols} />}
         {tab === "pimpinan" && <PimpinanTab now={now} patrols={patrols} incidents={incidents} posAssign={posAssign} instruksi={instruksi} mutations={mutations} currentUser={currentUser} />}
         {tab === "dashboard" && <DashTab now={now} shift={shift} reguHari={reguHari} posAssign={posAssign} incidents={incidents} packages={packages} guests={guests} patrols={patrols} standJaga={standJaga} mutations={mutations} posRollingLog={posRollingLog} liburData={liburData} setLiburData={setLiburData} instruksi={instruksi} currentUser={currentUser} setTab={setTab} canEdit={canEdit} isAdmin={isAdmin} />}
@@ -4001,12 +4299,14 @@ function App() {
         {tab === "incident" && <IncTab incidents={incidents} setIncidents={setIncidents} posAssign={posAssign} toast={toast} canEdit={canEdit} />}
         {tab === "package" && <PkgTab packages={packages} setPackages={setPackages} toast={toast} canEdit={canEdit} />}
         {tab === "guest" && <GuestTab guests={guests} setGuests={setGuests} toast={toast} canEdit={canEdit} />}
+        {tab === "keluar" && <KeluarTab keluarData={keluarData} setKeluarData={setKeluarData} toast={toast} canEdit={canEdit} isAdmin={isAdmin} now={now} />}
         {tab === "mutation" && <MutTab mutations={mutations} setMutations={setMutations} reguHari={reguHari} toast={toast} canEdit={canEdit} patrols={patrols} incidents={incidents} packages={packages} guests={guests} currentUser={currentUser} standJaga={standJaga} rollings={rollings} inventarisDaftar={inventarisDaftar} inventarisCek={inventarisCek} />}
         {tab === "absen" && <AbsenTab absen={absen} setAbsen={setAbsen} liburData={liburData} setLiburData={setLiburData} reguHari={reguHari} toast={toast} canEdit={canEdit} isAdmin={isAdmin} now={now} />}
         {tab === "instruksi" && <InstruksiTab instruksi={instruksi} setInstruksi={setInstruksi} toast={toast} isAdmin={isAdmin} currentUser={currentUser} />}
         {tab === "profile" && <ProfileTab currentUser={currentUser} patrols={patrols} standJaga={standJaga} incidents={incidents} mutations={mutations} onLogout={handleLogout} toast={toast} userPins={userPins} setUserPins={setUserPins} />}
         {tab === "members" && <AdminMemberTab patrols={patrols} standJaga={standJaga} incidents={incidents} mutations={mutations} />}
         {tab === "inventaris" && <InventarisTab inventarisDaftar={inventarisDaftar} setInventarisDaftar={setInventarisDaftar} inventarisCek={inventarisCek} setInventarisCek={setInventarisCek} toast={toast} isAdmin={isAdmin} canEdit={canEdit} now={now} />}
+        </div>
       </main>
 
       {/* BOTTOM NAV */}
