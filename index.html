@@ -1179,7 +1179,7 @@ function PosTab({reguHari,posAssign,setPosAssign,posRollingLog,setPosRollingLog,
 }
 
 // ─── STAND JAGA ───────────────────────────────────────────────────────────────
-function StandTab({standJaga,setStandJaga,posAssign,reguHari,toast,canEdit,currentUser}) {
+function StandTab({standJaga,setStandJaga,posAssign,reguHari,toast,canEdit,currentUser,isAdmin=false}) {
   const [scanOpen,setScanOpen]=useState(false);
   const [confirm,setConfirm]=useState(null);
   const [officer,setOfficer]=useState("");
@@ -1215,7 +1215,22 @@ function StandTab({standJaga,setStandJaga,posAssign,reguHari,toast,canEdit,curre
               <div style={{fontSize:20,fontWeight:900,color:"var(--accent)"}}>{confirm.area}</div>
               <div style={{fontSize:12,color:"var(--tx3)"}}>{confirm.pos}</div>
             </div>
-            <Inp label="Nama Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} as="select"><option value="">— Pilih —</option>{members.map(m=><option key={m}>{m}</option>)}</Inp>
+            {/* Nama petugas: otomatis dari login, admin bisa pilih semua */}
+            {isAdmin ? (
+              <Inp label="Nama Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} as="select">
+                <option value="">— Pilih Anggota —</option>
+                {members.map(m=><option key={m}>{m}</option>)}
+              </Inp>
+            ) : (
+              <div style={{marginBottom:11}}>
+                <label style={{display:"block",fontSize:11,color:"var(--accent)",marginBottom:4,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>Nama Petugas</label>
+                <div style={{background:"var(--card2)",border:"1.5px solid var(--border2)",borderRadius:9,padding:"9px 12px",fontSize:13.5,color:"var(--tx)",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:14}}>👤</span>
+                  <span style={{fontWeight:700}}>{officer||currentUser?.name||"—"}</span>
+                  <span style={{marginLeft:"auto",fontSize:10,color:"var(--tx3)",background:"var(--card3)",borderRadius:5,padding:"2px 7px"}}>Login aktif</span>
+                </div>
+              </div>
+            )}
             <Inp label="Catatan (opsional)" value={notes} onChange={e=>setNotes(e.target.value)} as="textarea" placeholder="Kondisi pos..."/>
             <div style={{display:"flex",gap:8}}><Btn onClick={doConfirm} color="var(--ok)" size="lg" full><IC n="ok" s={14}/> Konfirmasi</Btn><Btn onClick={()=>setConfirm(null)} color="var(--tx4)" variant="outline">Batal</Btn></div>
           </div>
@@ -1353,7 +1368,22 @@ function PatrolTab({posAssign,patrols,setPatrols,toast,canEdit,isAdmin,currentUs
               <div style={{fontSize:20,fontWeight:900,color:"var(--ok)"}}>{confirm.area}</div>
               {confirm.isManual&&<div style={{fontSize:10,color:"#ffcc00",marginTop:4}}>⚠️ Mode manual — foto bukti wajib</div>}
             </div>
-            <Inp label="Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} placeholder="Nama petugas"/>
+            {/* Nama petugas: otomatis dari login, admin bisa pilih */}
+            {isAdmin ? (
+              <Inp label="Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} as="select">
+                <option value="">— Pilih Anggota —</option>
+                {Object.values(REGU).flat().map(m=><option key={m} value={m}>{m}</option>)}
+              </Inp>
+            ) : (
+              <div style={{marginBottom:11}}>
+                <label style={{display:"block",fontSize:11,color:"var(--accent)",marginBottom:4,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>Petugas</label>
+                <div style={{background:"var(--card2)",border:"1.5px solid var(--border2)",borderRadius:9,padding:"9px 12px",fontSize:13.5,color:"var(--tx)",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:14}}>👤</span>
+                  <span style={{fontWeight:700}}>{officer||currentUser?.name||"—"}</span>
+                  <span style={{marginLeft:"auto",fontSize:10,color:"var(--tx3)",background:"var(--card3)",borderRadius:5,padding:"2px 7px"}}>Login aktif</span>
+                </div>
+              </div>
+            )}
             <Inp label="Catatan Kondisi" value={notes} onChange={e=>setNotes(e.target.value)} as="textarea" placeholder="Kondisi titik patroli..."/>
             <div style={{marginBottom:14}}>
               <label style={{display:"block",fontSize:11,color:photo?"var(--ok)":"#dc2626",marginBottom:6,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>📷 Foto Bukti — WAJIB</label>
