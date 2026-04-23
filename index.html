@@ -208,74 +208,6 @@
     }
     .keluar-card { animation: cardSlideIn .25s ease both; }
   </style>
-<script>
-// ── Inline QR Code Generator (no CDN needed) ─────────────────────────────────
-(function(){
-  if(window.qrcodegen) return;
-  const EXP=new Uint8Array(512),LOG=new Uint8Array(256);
-  let x=1;
-  for(let i=0;i<255;i++){EXP[i]=x;LOG[x]=i;x<<=1;if(x&0x100)x^=0x11D;}
-  for(let i=255;i<512;i++) EXP[i]=EXP[i-255];
-  const gfMul=(a,b)=>(a&&b)?EXP[LOG[a]+LOG[b]]:0;
-  function rsGen(n){let g=[1];for(let i=0;i<n;i++){const g2=new Array(g.length+1).fill(0);for(let j=0;j<g.length;j++){g2[j]^=g[j];g2[j+1]^=gfMul(g[j],EXP[i]);}g=g2;}return g;}
-  function rsEnc(data,nEc){const g=rsGen(nEc),msg=[...data,...new Array(nEc).fill(0)];for(let i=0;i<data.length;i++){const c=msg[i];if(c)for(let j=0;j<g.length;j++)msg[i+j]^=gfMul(c,g[j]);}return msg.slice(data.length);}
-  const VD={2:[25,16,10,1],3:[29,26,15,1],4:[33,36,20,2],5:[37,46,26,2],6:[41,60,18,2],7:[45,66,20,4],8:[49,86,24,2],9:[53,100,30,3],10:[57,122,18,4]};
-  const AP={2:[],3:[6,22],4:[6,26],5:[6,30],6:[6,34],7:[6,22,38],8:[6,24,42],9:[6,26,46],10:[6,28,50]};
-  const FMT_MASK=0b101010000010010,FMT_GEN=0b10100110111;
-  function fmtEcc(d){let r=d;for(let i=0;i<10;i++)r=(r<<1)^((r>>9)?FMT_GEN:0);return r&0x3FF;}
-  function getFmt(e,m){const d=(e<<3)|m;return((d<<10)|fmtEcc(d))^FMT_MASK;}
-  function placeFormat(grid,n,fmt){
-    // Top-left horizontal: row 8, cols 0,1,2,3,4,5,7,8 = bits 14..7
-    [0,1,2,3,4,5,7,8].forEach((c,i)=>grid[8][c]=(fmt>>(14-i))&1);
-    // Top-left vertical: col 8, rows 7,5,4,3,2,1,0 = bits 6..0
-    [7,5,4,3,2,1,0].forEach((r,i)=>grid[r][8]=(fmt>>(6-i))&1);
-    // Top-right mirror: row 8, cols n-1..n-8 = bits 0..7
-    for(let i=0;i<8;i++) grid[8][n-1-i]=(fmt>>i)&1;
-    // Bottom-left mirror: col 8, rows n-7..n-1 = bits 14..8
-    grid[n-8][8]=1;
-    for(let i=0;i<7;i++) grid[n-7+i][8]=(fmt>>(14-i))&1;
-  }
-  function makeQR(text){
-    const bytes=[];for(let i=0;i<text.length;i++)bytes.push(text.charCodeAt(i)&0xFF);
-    let version=null;
-    for(let v=2;v<=10;v++){if((4+8+8*bytes.length)<=VD[v][1]*8){version=v;break;}}
-    if(!version)throw new Error("Text too long");
-    const[n,totalCw,ecPb,nBlocks]=VD[version],dataPb=Math.floor(totalCw/nBlocks);
-    const bits=[];
-    const ab=(val,ln)=>{for(let i=ln-1;i>=0;i--)bits.push((val>>i)&1);};
-    ab(0b0100,4);ab(bytes.length,8);for(const b of bytes)ab(b,8);
-    for(let i=0;i<Math.min(4,totalCw*8-bits.length);i++)bits.push(0);
-    while(bits.length%8)bits.push(0);
-    const pad=[0xEC,0x11];let pi=0;while(bits.length<totalCw*8)ab(pad[pi++%2],8);
-    const cws=[];for(let i=0;i<bits.length;i+=8)cws.push(parseInt(bits.slice(i,i+8).join(''),2));
-    const bd=[],be=[];let idx=0;
-    for(let i=0;i<nBlocks;i++){const blk=cws.slice(idx,idx+dataPb);bd.push(blk);be.push(rsEnc(blk,ecPb));idx+=dataPb;}
-    const final=[];
-    for(let i=0;i<Math.max(...bd.map(b=>b.length));i++)for(const b of bd)if(i<b.length)final.push(b[i]);
-    for(let i=0;i<ecPb;i++)for(const b of be)final.push(b[i]);
-    const grid=Array.from({length:n},()=>new Array(n).fill(null));
-    const res=Array.from({length:n},()=>new Array(n).fill(false));
-    const sm=(r,c,v,rs=true)=>{if(r>=0&&r<n&&c>=0&&c<n){grid[r][c]=v;if(rs)res[r][c]=true;}};
-    const finder=(r,c)=>{for(let dr=-1;dr<8;dr++)for(let dc=-1;dc<8;dc++){if(r+dr<0||r+dr>=n||c+dc<0||c+dc>=n)continue;const ib=dr>=0&&dr<=6&&dc>=0&&dc<=6;sm(r+dr,c+dc,(ib&&(dr===0||dr===6||dc===0||dc===6||( dr>=2&&dr<=4&&dc>=2&&dc<=4)))?1:0);}};
-    finder(0,0);finder(0,n-7);finder(n-7,0);
-    for(let i=8;i<n-8;i++){sm(6,i,i%2===0?1:0);sm(i,6,i%2===0?1:0);}
-    sm(n-8,8,1);
-    const ap=AP[version]||[];
-    for(const r of ap)for(const c of ap){if((r===6&&c===6)||(r===6&&c===ap[ap.length-1])||(r===ap[ap.length-1]&&c===6))continue;for(let dr=-2;dr<=2;dr++)for(let dc=-2;dc<=2;dc++)sm(r+dr,c+dc,(Math.abs(dr)===2||Math.abs(dc)===2||(dr===0&&dc===0))?1:0);}
-    for(let i=0;i<9;i++){res[8][i]=true;res[i][8]=true;}
-    for(let i=n-8;i<n;i++){res[8][i]=true;res[i][8]=true;}
-    const finalBits=[];for(const byte of final)for(let i=7;i>=0;i--)finalBits.push((byte>>i)&1);
-    const maskFns=[(r,c)=>(r+c)%2===0,(r,c)=>r%2===0,(r,c)=>c%3===0,(r,c)=>(r+c)%3===0,(r,c)=>(Math.floor(r/2)+Math.floor(c/3))%2===0,(r,c)=>(r*c)%2+(r*c)%3===0,(r,c)=>((r*c)%2+(r*c)%3)%2===0,(r,c)=>((r+c)%2+(r*c)%3)%2===0];
-    function zigzag(g2,mfn){let bi=0,goUp=true,col=n-1;while(col>=1){if(col===6)col--;const rows=goUp?[...Array(n).keys()].reverse():[...Array(n).keys()];for(const r of rows)for(const dc of[0,1]){const c=col-dc;if(c>=0&&c<n&&!res[r][c]){const bit=bi<finalBits.length?finalBits[bi++]:0;g2[r][c]=bit^(mfn(r,c)?1:0);}}goUp=!goUp;col-=2;}return g2;}
-    let bestScore=null,bestGrid=null;
-    for(let mi=0;mi<8;mi++){const g2=grid.map(row=>[...row]);zigzag(g2,maskFns[mi]);placeFormat(g2,n,getFmt(0b01,mi));let sc=0;for(let r=0;r<n;r++){let run=1;for(let c=1;c<n;c++){if(g2[r][c]===g2[r][c-1])run++;else{if(run>=5)sc+=run-2;run=1;}}}if(bestScore===null||sc<bestScore){bestScore=sc;bestGrid=g2;}}
-    return{size:n,getModule:(x,y)=>bestGrid[y][x]===1};
-  }
-  window.qrcodegen={QrCode:{Ecc:{LOW:0,MEDIUM:1,QUARTILE:2,HIGH:3},encodeText:(text,ecc)=>makeQR(text)}};
-  window._qrLoading=false;
-  console.log("Inline QR generator loaded");
-})();
-</script>
 </head>
 <body>
 <div id="root"></div>
@@ -565,12 +497,10 @@ function QRSvg({ value, size=120 }) {
     if (window.qrcodegen) { generate(); return; }
     if (window._qrLoading) { const t=setInterval(()=>{ if(window.qrcodegen){clearInterval(t);generate();} },100); return ()=>clearInterval(t); }
     window._qrLoading = true;
-    // Inline QR generator — no CDN needed
-    (function inlineLoad(){
-      if(window.qrcodegen){generate();return;}
-      // Already being set up by the inline script in <head>
-      const t=setInterval(()=>{if(window.qrcodegen){clearInterval(t);generate();}},50);
-    })();
+    const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodegen/1.8.0/qrcodegen.min.js";
+    sc.onload = () => { window._qrLoading=false; generate(); };
+    document.head.appendChild(sc);
   }, [value]);
 
   if (!svgData) return (
@@ -636,82 +566,74 @@ function Btn({children,onClick,color="var(--accent)",size="md",variant="solid",d
 
 // ─── CAMERA QR SCANNER ────────────────────────────────────────────────────────
 function CamScanner({onScan,onClose,customDecode}) {
-  const vRef     = useRef(null);
-  const cRef     = useRef(null);
-  const stateRef = useRef({stream:null,raf:null,active:false,done:false});
-  const cbRef    = useRef({onScan,customDecode});
-  cbRef.current  = {onScan,customDecode};
+  const vRef      = useRef(null);
+  const cRef      = useRef(null);
+  const stateRef  = useRef({ stream:null, raf:null, active:false, done:false });
+  const cbRef     = useRef({ onScan, customDecode });
+  cbRef.current   = { onScan, customDecode };
 
-  const [status,   setStatus]   = useState("idle"); // idle|starting|live|hit|err|notfound
-  const [hitText,  setHitText]  = useState("");
-  const [rawText,  setRawText]  = useState("");  // raw QR value untuk debug
-  const [errMsg,   setErrMsg]   = useState("");
-  const [scanCount,setScanCount]= useState(0);   // counter frame yg sudah di-scan
-  const [jsReady,  setJsReady]  = useState(!!window.jsQR||!!window.BarcodeDetector);
+  const [status, setStatus] = useState("idle"); // idle | starting | live | hit | err
+  const [hitText, setHitText] = useState("");
+  const [errMsg,  setErrMsg]  = useState("");
+  const [jsReady, setJsReady] = useState(!!window.jsQR);
 
-  /* ── load jsQR ──────────────────────────────────────────────── */
+  /* ── muat jsQR jika perlu ─────────────────────────────────── */
   useEffect(()=>{
     if(window.BarcodeDetector||window.jsQR){setJsReady(true);return;}
     const sc=document.createElement("script");
     sc.src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
-    sc.onload=()=>setJsReady(true);
-    sc.onerror=()=>setErrMsg("⚠️ jsQR gagal dimuat. Gunakan pilih manual.");
+    sc.onload=()=>{setJsReady(true);};
     document.head.appendChild(sc);
   },[]);
 
-  /* ── stop kamera ────────────────────────────────────────────── */
+  /* ── hard stop: matikan stream + batalkan RAF ─────────────── */
   const hardStop = useCallback(()=>{
-    const st=stateRef.current;
-    st.active=false;
-    if(st.raf){cancelAnimationFrame(st.raf);st.raf=null;}
-    if(st.stream){st.stream.getTracks().forEach(t=>t.stop());st.stream=null;}
-    if(vRef.current) vRef.current.srcObject=null;
-    setStatus(s=>(s==="live"||s==="starting")?"idle":s);
+    const st = stateRef.current;
+    st.active = false;
+    if(st.raf){ cancelAnimationFrame(st.raf); st.raf=null; }
+    if(st.stream){ st.stream.getTracks().forEach(t=>t.stop()); st.stream=null; }
+    if(vRef.current){ vRef.current.srcObject=null; }
+    setStatus(s=> s==="live"||s==="starting" ? "idle" : s);
   },[]);
 
-  /* ── decode frame ───────────────────────────────────────────── */
+  /* ── decode satu frame ────────────────────────────────────── */
   const decodeFrame = useCallback(()=>{
-    const st=stateRef.current;
+    const st = stateRef.current;
     if(!st.active||st.done) return;
-    const v=vRef.current,c=cRef.current;
-    if(!v||!c||v.readyState<2){st.raf=requestAnimationFrame(decodeFrame);return;}
 
-    const W=v.videoWidth||320,H=v.videoHeight||240;
+    const v=vRef.current, c=cRef.current;
+    if(!v||!c||v.readyState<2){ st.raf=requestAnimationFrame(decodeFrame); return; }
+
+    const W=v.videoWidth||320, H=v.videoHeight||240;
     if(c.width!==W) c.width=W;
     if(c.height!==H) c.height=H;
     const ctx=c.getContext("2d",{willReadFrequently:true});
     ctx.drawImage(v,0,0,W,H);
-    setScanCount(n=>n+1);
 
     const tryResult=(raw)=>{
       if(!raw||st.done) return false;
-      setRawText(raw); // selalu tampilkan apa yang dibaca
       const {customDecode:cd}=cbRef.current;
-      const result=cd?cd(raw):(decQR(raw)||ALL_AREAS.find(a=>raw.includes(a))||null);
-      if(!result){
-        // QR terbaca tapi format tidak dikenali
-        setStatus("notfound");
-        setTimeout(()=>{ if(st.active) setStatus("live"); },2000);
-        return false;
-      }
+      const result = cd ? cd(raw) : (decQR(raw)||ALL_AREAS.find(a=>raw.includes(a))||null);
+      if(!result) return false;
       st.done=true; st.active=false;
       if(st.raf){cancelAnimationFrame(st.raf);st.raf=null;}
+      // jangan matikan stream dulu — biarkan terlihat saat hit
       setHitText(result);
       setStatus("hit");
-      setTimeout(()=>{ hardStop(); cbRef.current.onScan(result); },800);
+      setTimeout(()=>{
+        hardStop();
+        cbRef.current.onScan(result);
+      },500);
       return true;
     };
 
     if(window.BarcodeDetector){
       new window.BarcodeDetector({formats:["qr_code"]}).detect(c)
-        .then(bs=>{
-          if(!bs.length){ if(st.active) st.raf=requestAnimationFrame(decodeFrame); return; }
-          if(!tryResult(bs[0].rawValue)){ if(st.active) st.raf=requestAnimationFrame(decodeFrame); }
-        })
+        .then(bs=>{ if(!bs.length||!tryResult(bs[0].rawValue)) { if(st.active) st.raf=requestAnimationFrame(decodeFrame); } })
         .catch(()=>{ if(st.active) st.raf=requestAnimationFrame(decodeFrame); });
     } else if(window.jsQR){
       const img=ctx.getImageData(0,0,W,H);
-      const code=window.jsQR(img.data,W,H,{inversionAttempts:"attemptBoth"});
+      const code=window.jsQR(img.data,W,H,{inversionAttempts:"dontInvert"});
       if(!code||!tryResult(code.data)){
         if(st.active) st.raf=requestAnimationFrame(decodeFrame);
       }
@@ -720,11 +642,11 @@ function CamScanner({onScan,onClose,customDecode}) {
     }
   },[hardStop]);
 
-  /* ── mulai kamera ───────────────────────────────────────────── */
-  const start=useCallback(async()=>{
+  /* ── mulai kamera ─────────────────────────────────────────── */
+  const start = useCallback(async()=>{
     const st=stateRef.current;
     if(st.stream||st.active) return;
-    setStatus("starting"); setErrMsg(""); setHitText(""); setRawText(""); setScanCount(0);
+    setStatus("starting"); setErrMsg(""); setHitText("");
     st.done=false; st.active=false;
     try{
       const stream=await navigator.mediaDevices.getUserMedia({
@@ -734,7 +656,13 @@ function CamScanner({onScan,onClose,customDecode}) {
       const v=vRef.current;
       if(!v){stream.getTracks().forEach(t=>t.stop());st.stream=null;return;}
       v.srcObject=stream;
-      const go=()=>{ v.play().then(()=>{ st.active=true; setStatus("live"); st.raf=requestAnimationFrame(decodeFrame); }).catch(()=>{}); };
+      const go=()=>{
+        v.play().then(()=>{
+          st.active=true;
+          setStatus("live");
+          st.raf=requestAnimationFrame(decodeFrame);
+        }).catch(()=>{});
+      };
       if(v.readyState>=1) go(); else v.onloadedmetadata=go;
     }catch(e){
       setStatus("err");
@@ -742,105 +670,80 @@ function CamScanner({onScan,onClose,customDecode}) {
     }
   },[decodeFrame]);
 
-  useEffect(()=>{ start(); return()=>{ stateRef.current.done=true; hardStop(); }; },[]);
+  /* ── mount: mulai otomatis; unmount: selalu stop ─────────── */
+  useEffect(()=>{
+    start();
+    return ()=>{ stateRef.current.done=true; hardStop(); };
+  },[]);   // eslint-disable-line
 
   const handleManual=(val)=>{ hardStop(); cbRef.current.onScan(val); };
 
-  const isLive  = status==="live";
-  const isHit   = status==="hit";
-  const isErr   = status==="err";
-  const isStart = status==="starting"||status==="idle";
-  const isNotFound = status==="notfound";
-  const hasBD   = !!window.BarcodeDetector;
-  const hasDecoder = hasBD||!!window.jsQR;
+  const isLive   = status==="live";
+  const isHit    = status==="hit";
+  const isErr    = status==="err";
+  const isStart  = status==="starting"||status==="idle";
+  const hasBD    = !!window.BarcodeDetector;
 
   return (
     <div>
       {/* Viewfinder */}
       <div style={{position:"relative",background:"#000",minHeight:240,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-        <video ref={vRef} style={{width:"100%",maxHeight:270,objectFit:"cover",display:(isLive||isHit||isNotFound)?"block":"none"}} playsInline muted/>
+        <video ref={vRef} style={{width:"100%",maxHeight:270,objectFit:"cover",display:(isLive||isHit)?"block":"none"}} playsInline muted/>
         <canvas ref={cRef} style={{display:"none"}}/>
 
-        {/* Bingkai scan */}
-        {(isLive||isNotFound)&&(
+        {/* Overlay + scanning line */}
+        {isLive&&(
           <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
             <div style={{width:200,height:200,position:"relative"}}>
+              {/* Sudut bingkai */}
               {[["0%","0%","0","0"],["0%","auto","0","0"],["auto","0%","0","0"],["auto","auto","0","0"]].map(([t,b,r,l],i)=>(
                 <div key={i} style={{position:"absolute",top:t,bottom:b,right:r,left:l,width:28,height:28,
-                  borderTop:t==="0%"?`3px solid ${isNotFound?"#ff6b6b":"var(--accent-light)"}`:"none",
-                  borderBottom:b==="0%"?`3px solid ${isNotFound?"#ff6b6b":"var(--accent-light)"}`:"none",
-                  borderLeft:l==="0%"?`3px solid ${isNotFound?"#ff6b6b":"var(--accent-light)"}`:"none",
-                  borderRight:r==="0%"?`3px solid ${isNotFound?"#ff6b6b":"var(--accent-light)"}`:"none",
+                  borderTop:t==="0%"?"3px solid var(--accent-light)":"none",
+                  borderBottom:b==="0%"?"3px solid var(--accent-light)":"none",
+                  borderLeft:l==="0%"?"3px solid var(--accent-light)":"none",
+                  borderRight:r==="0%"?"3px solid var(--accent-light)":"none",
                   borderRadius:i===0?"8px 0 0 0":i===1?"0 0 0 8px":i===2?"0 8px 0 0":"0 0 8px 0"
                 }}/>
               ))}
-              <div style={{position:"absolute",left:4,right:4,height:2,background:isNotFound?"#ff6b6b":"var(--accent-light)",opacity:.85,animation:"sl 1.8s ease-in-out infinite"}}/>
+              {/* Garis scan */}
+              <div style={{position:"absolute",left:4,right:4,height:2,background:"var(--accent-light)",opacity:.85,animation:"sl 1.8s ease-in-out infinite"}}/>
+              {/* Area gelap di luar bingkai */}
               <div style={{position:"absolute",inset:-9999,boxShadow:"inset 0 0 0 9999px rgba(0,0,0,.55)",pointerEvents:"none"}}/>
             </div>
           </div>
         )}
 
-        {/* ✓ Hit */}
-        {isHit&&(
-          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.6)"}}>
-            <div style={{background:"#16a34a",color:"#fff",borderRadius:14,padding:"16px 28px",fontWeight:800,fontSize:15,textAlign:"center",boxShadow:"0 4px 24px rgba(0,0,0,.4)"}}>
-              <div style={{fontSize:36,marginBottom:6}}>✅</div>
-              <div style={{fontSize:13,opacity:.85,marginBottom:4}}>QR Berhasil Dibaca!</div>
-              <div style={{fontSize:16}}>{hitText}</div>
-            </div>
+        {/* Hit */}
+        {isHit&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.5)"}}>
+          <div style={{background:"var(--ok)",color:"#fff",borderRadius:12,padding:"14px 24px",fontWeight:800,fontSize:15,textAlign:"center"}}>
+            <div style={{fontSize:28,marginBottom:6}}>✓</div>{hitText}
           </div>
-        )}
+        </div>}
 
-        {/* ✕ Format tidak dikenali */}
-        {isNotFound&&(
-          <div style={{position:"absolute",bottom:8,left:8,right:8}}>
-            <div style={{background:"rgba(220,38,38,.92)",color:"#fff",borderRadius:10,padding:"10px 14px",fontSize:12,fontWeight:700,textAlign:"center"}}>
-              ❌ QR terbaca tapi tidak dikenali sistem<br/>
-              <span style={{fontSize:10,fontWeight:400,opacity:.85}}>{rawText.slice(0,50)}{rawText.length>50?"...":""}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Starting */}
-        {isStart&&(
-          <div style={{textAlign:"center",color:"#fff",padding:28}}>
-            <IC n="cam" s={44} c="var(--accent-light)"/>
-            <div style={{marginTop:10,fontSize:13}}>{status==="starting"?"Memulai kamera...":"Kamera siap"}</div>
-          </div>
-        )}
+        {/* Starting / idle */}
+        {isStart&&<div style={{textAlign:"center",color:"#fff",padding:28}}>
+          <IC n="cam" s={44} c="var(--accent-light)"/>
+          <div style={{marginTop:10,fontSize:13}}>{status==="starting"?"Memulai kamera...":"Kamera siap"}</div>
+        </div>}
 
         {/* Error */}
-        {isErr&&(
-          <div style={{textAlign:"center",color:"#fca5a5",padding:24,fontSize:12.5}}>
-            <div style={{fontSize:30,marginBottom:8}}>📵</div>{errMsg}
-          </div>
-        )}
-      </div>
-
-      {/* Status bar */}
-      <div style={{padding:"8px 16px",background:"var(--card2)",borderBottom:"1px solid var(--border)"}}>
-        {/* Decoder status */}
-        {isLive&&(
-          hasBD
-            ? <div style={{fontSize:11,color:"var(--ok)",fontWeight:700}}>✓ BarcodeDetector aktif — arahkan ke QR</div>
-            : jsReady
-              ? <div style={{fontSize:11,color:"var(--ok)",fontWeight:700}}>✓ jsQR aktif — arahkan ke QR</div>
-              : <div style={{fontSize:11,color:"#ffcc00",fontWeight:700}}>⏳ Memuat decoder...</div>
-        )}
-        {/* Frame counter saat live */}
-        {isLive&&scanCount>0&&(
-          <div style={{fontSize:10,color:"var(--tx4)",marginTop:2}}>
-            🔍 Memindai... ({scanCount} frame)
-            {!hasDecoder&&" — decoder belum siap"}
-          </div>
-        )}
-        {errMsg&&!isErr&&<div style={{fontSize:11,color:"#ff6b6b"}}>{errMsg}</div>}
+        {isErr&&<div style={{textAlign:"center",color:"#fca5a5",padding:24,fontSize:12.5}}>
+          <div style={{fontSize:30,marginBottom:8}}>📵</div>{errMsg}
+        </div>}
       </div>
 
       {/* Info + manual */}
       <div style={{padding:"12px 16px 16px"}}>
-        <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:7,textTransform:"uppercase",letterSpacing:.5}}>Atau pilih manual:</div>
-        <div style={{maxHeight:180,overflowY:"auto",display:"flex",flexDirection:"column",gap:5,marginBottom:12}}>
+        {/* Status decoder */}
+        {isLive&&!hasBD&&(
+          jsReady
+            ? <div style={{background:"rgba(74,222,128,.08)",border:"1px solid #86efac",borderRadius:8,padding:"7px 12px",marginBottom:10,fontSize:12,color:"var(--ok)"}}>✓ Decoder aktif — arahkan kamera ke QR code</div>
+            : <div style={{background:"rgba(255,204,0,.08)",border:"1px solid #fbbf24",borderRadius:8,padding:"7px 12px",marginBottom:10,fontSize:12,color:"#ffcc00"}}>⏳ Memuat decoder QR...</div>
+        )}
+
+        {/* Pilih manual */}
+        <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:7,textTransform:"uppercase",letterSpacing:.5}}>Pilih manual:</div>
+        <div style={{maxHeight:200,overflowY:"auto",display:"flex",flexDirection:"column",gap:5,marginBottom:12}}>
           {customDecode
             ? POS_LIST.map(pos=>(
                 <button key={pos} onClick={()=>handleManual(pos)} style={{background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--accent-light)",fontSize:13,fontWeight:600,padding:"10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
@@ -859,6 +762,8 @@ function CamScanner({onScan,onClose,customDecode}) {
               ))
           }
         </div>
+
+        {/* Tombol */}
         <div style={{display:"flex",gap:8}}>
           {isLive
             ? <Btn onClick={hardStop} color="var(--tx4)" variant="outline">⏹ Stop Kamera</Btn>
@@ -1487,196 +1392,287 @@ function StandTab({standJaga,setStandJaga,posAssign,reguHari,toast,canEdit,curre
 }
 
 // ─── PATROL ───────────────────────────────────────────────────────────────────
+// Checklist items per patroli
+const CHECKLIST_ITEMS = ["Jendela","Pintu","Lampu","Barang Inventaris","Kondisi Umum"];
+const CHECKLIST_ICON  = {"Jendela":"🪟","Pintu":"🚪","Lampu":"💡","Barang Inventaris":"📦","Kondisi Umum":"✅"};
+
+// Warna per pos
+const POS_RING = {
+  "Pos Asrama":    {ring:"#60cdff",fill:"rgba(96,205,255,.12)",txt:"#60cdff"},
+  "Gedung Utama":  {ring:"#4ade80",fill:"rgba(74,222,128,.12)",txt:"#4ade80"},
+  "Pos Utama":     {ring:"#0078d4",fill:"rgba(0,120,212,.12)", txt:"#0078d4"},
+  "Pos Guest House":{ring:"#a78bfa",fill:"rgba(167,139,250,.12)",txt:"#a78bfa"},
+};
+
+function AreaCircle({area,pos,last,onTap,canEdit}) {
+  const col = POS_RING[pos] || {ring:"var(--accent)",fill:"var(--pill-active)",txt:"var(--accent-light)"};
+  const minsAgo = last ? Math.floor((Date.now()-last.ts)/60000) : null;
+  const fresh   = minsAgo !== null && minsAgo < 60;
+  // Split area name for display
+  const words = area.split(" ");
+  const line1 = words.slice(0,2).join(" ");
+  const line2 = words.slice(2).join(" ");
+  return (
+    <button
+      onClick={()=>canEdit&&onTap(area)}
+      disabled={!canEdit}
+      style={{
+        background:"none",border:"none",cursor:canEdit?"pointer":"default",
+        display:"flex",flexDirection:"column",alignItems:"center",gap:6,
+        padding:4, opacity:canEdit?1:.6,
+      }}
+    >
+      {/* Outer ring */}
+      <div style={{
+        width:84,height:84,borderRadius:"50%",
+        border:`3px solid ${fresh?"var(--ok)":col.ring}`,
+        background:fresh?"rgba(74,222,128,.1)":col.fill,
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        position:"relative",
+        boxShadow: fresh?`0 0 0 4px rgba(74,222,128,.18)`:canEdit?`0 0 0 2px ${col.ring}22`:"none",
+        transition:"all .2s",
+      }}>
+        {/* Inner ring */}
+        <div style={{
+          width:62,height:62,borderRadius:"50%",
+          border:`1.5px solid ${fresh?"rgba(74,222,128,.5)":col.ring+"55"}`,
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+          padding:4,
+        }}>
+          <div style={{fontSize:9.5,fontWeight:800,color:fresh?"var(--ok)":col.txt,textAlign:"center",lineHeight:1.25,wordBreak:"break-word"}}>
+            {line1}
+          </div>
+          {line2&&<div style={{fontSize:8.5,fontWeight:700,color:fresh?"var(--ok)":col.txt,textAlign:"center",lineHeight:1.2,opacity:.85}}>
+            {line2}
+          </div>}
+        </div>
+        {/* Fresh badge */}
+        {fresh&&<div style={{position:"absolute",top:-4,right:-4,width:18,height:18,borderRadius:"50%",background:"var(--ok)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>✓</div>}
+      </div>
+      {/* Time label */}
+      <div style={{fontSize:9,color:fresh?"var(--ok)":"var(--tx4)",fontWeight:700,textAlign:"center"}}>
+        {minsAgo===null?"Belum":minsAgo<60?`${minsAgo}m lalu`:minsAgo<1440?`${Math.floor(minsAgo/60)}j lalu`:"Kemarin"}
+      </div>
+    </button>
+  );
+}
+
 function PatrolTab({posAssign,patrols,setPatrols,toast,canEdit,isAdmin,currentUser}) {
-  const [scanOpen,setScanOpen]=useState(false);
-  const [manualOpen,setManualOpen]=useState(false);
-  const [confirm,setConfirm]=useState(null);
-  const [officer,setOfficer]=useState("");
-  const [notes,setNotes]=useState("");
-  const [photo,setPhoto]=useState(null);
-  const [viewQR,setViewQR]=useState(null);
-  const [viewPhoto,setViewPhoto]=useState(null);
-  const [manualArea,setManualArea]=useState("");
-  const fileRef=useRef();
+  const [confirm,  setConfirm]  = useState(null);   // {area, pos}
+  const [checks,   setChecks]   = useState({});      // {item: true/false}
+  const [notes,    setNotes]    = useState("");
+  const [officer,  setOfficer]  = useState("");
+  const [photo,    setPhoto]    = useState(null);
+  const [viewPhoto,setViewPhoto]= useState(null);
+  const [viewLog,  setViewLog]  = useState(null);    // area name to show log
+  const fileRef = useRef();
 
-  const onScan=(area)=>{
-    setScanOpen(false);
-    // Blok jika area di-scan < 1 menit lalu
-    const now = Date.now();
-    const lastScan = patrols.filter(p=>p.areas?.includes(area)).at(-1);
-    if (lastScan && (now - lastScan.ts) < 60000) {
-      toast(`⏳ ${area} baru discan ${Math.ceil((now-lastScan.ts)/1000)} detik lalu, tunggu sebentar!`, false);
-      return;
+  const openArea = (area) => {
+    const pos = getPos(area)||"—";
+    // Cooldown 60 detik
+    const last = patrols.filter(p=>p.areas?.includes(area)).at(-1);
+    if(last && Date.now()-last.ts < 60000){
+      toast("Baru saja dipatroli, tunggu 60 detik",false); return;
     }
-    const pos=getPos(area);
-    setConfirm({area,pos:pos||"—",isManual:false});
-    setOfficer(currentUser?.name||posAssign[pos]?.join(", ")||"");
+    const initChecks = {};
+    CHECKLIST_ITEMS.forEach(k=>{ initChecks[k]=false; });
+    setChecks(initChecks);
     setNotes("");
     setPhoto(null);
+    setOfficer(currentUser?.name||posAssign[pos]?.join(",")||"");
+    setConfirm({area, pos});
   };
 
-  const onManual=()=>{
-    if(!manualArea){toast("Pilih area dulu!",false);return;}
-    const pos=getPos(manualArea);
-    setManualOpen(false);
-    setConfirm({area:manualArea,pos:pos||"—",isManual:true});
-    setOfficer(currentUser?.name||posAssign[pos]?.join(", ")||"");
-    setNotes("");
-    setPhoto(null);
-  };
+  const toggleCheck = (item) => setChecks(p=>({...p,[item]:!p[item]}));
 
-  const doP=()=>{
-    if(!photo){toast("📷 Foto bukti wajib diisi!",false);return;}
-    setPatrols([...patrols,{id:Date.now(),ts:Date.now(),pos:confirm.pos,officer:officer||"—",areas:[confirm.area],notes,photo,qrScan:!confirm.isManual,isManual:confirm.isManual}]);
+  const doPatrol = () => {
+    const checkedCount = Object.values(checks).filter(Boolean).length;
+    if(checkedCount===0){ toast("Centang minimal 1 item!",false); return; }
+    if(!photo){ toast("📷 Foto bukti wajib!",false); return; }
+    setPatrols([...patrols,{
+      id:Date.now(), ts:Date.now(),
+      pos:confirm.pos, officer:officer||"—",
+      areas:[confirm.area], notes,
+      checks:Object.entries(checks).filter(([,v])=>v).map(([k])=>k),
+      photo,
+    }]);
     setConfirm(null);
-    toast(`Patroli ${confirm.area} dicatat!`);
+    toast(`✓ Patroli ${confirm.area} dicatat!`);
   };
-  const handlePhoto=(e)=>{ const file=e.target.files[0]; if(!file) return; const r=new FileReader(); r.onload=()=>{ kompressFoto(r.result,400,0.25).then(compressed=>setPhoto(compressed)); }; r.readAsDataURL(file); };
-  const removePhoto=()=>{ setPhoto(null); if(fileRef.current) fileRef.current.value=""; };
 
-  const todP=patrols.filter(p=>new Date(p.ts).toDateString()===new Date().toDateString());
+  const handlePhoto=(e)=>{
+    const file=e.target.files[0]; if(!file) return;
+    const r=new FileReader();
+    r.onload=()=>kompressFoto(r.result,400,0.25).then(setPhoto);
+    r.readAsDataURL(file);
+  };
+
+  const todP = patrols.filter(p=>new Date(p.ts).toDateString()===new Date().toDateString());
+
   return (
     <div>
-      <PH title="Patroli QR" sub="Scan QR + foto bukti wajib sebagai validasi" action={canEdit&&(
-        <div style={{display:"flex",gap:6}}>
-          <Btn onClick={()=>setScanOpen(true)} color="var(--ok)"><IC n="cam" s={13}/> Scan QR</Btn>
-          <Btn onClick={()=>{setManualArea("");setManualOpen(true);}} color="var(--accent)" variant="outline">✏️ Manual</Btn>
-        </div>
-      )}/>
+      <PH title="Patroli" sub="Tap gedung untuk mencatat patroli"/>
       {!canEdit&&<ReadOnlyBanner reguHari={getReguHari(new Date())}/>}
-      <div style={{background:"var(--card-solid)",border:"1px solid var(--border)",borderRadius:12,marginBottom:14,overflow:"hidden"}}>
-        <div style={{padding:12}}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:10}}>
-            {ALL_AREAS.map(area=>{
-              const pos=getPos(area);
-              const cnt=patrols.filter(p=>p.areas?.includes(area)).length;
-              const last=patrols.filter(p=>p.areas?.includes(area)).at(-1);
-              return (
-                <div key={area} style={{background:"var(--card-solid)",border:"1px solid var(--border)",borderRadius:10,padding:10,textAlign:"center"}}>
-                  {isAdmin&&<div style={{display:"flex",justifyContent:"center",marginBottom:6}}><QRSvg value={encQR(area)} size={76}/></div>}
-                  <div style={{fontSize:10.5,fontWeight:800,color:"var(--tx2)",marginBottom:2}}>{area}</div>
-                  {pos&&<div style={{fontSize:9,color:POS_COL[pos]||"var(--tx4)",fontWeight:700,marginBottom:2}}>{pos}</div>}
-                  <div style={{fontSize:10,color:"var(--tx3)"}}>{cnt}× scan</div>
-                  {last&&<div style={{fontSize:10,color:"var(--ok)",fontWeight:700}}>{fmtT(last.ts)}</div>}
-                  {last?.photo&&<div style={{marginTop:4,fontSize:10,color:"#a78bfa",fontWeight:700}}>📷 Ada foto</div>}
-                  {isAdmin&&<div style={{marginTop:6,display:"flex",gap:4,justifyContent:"center"}}>
-                    <Btn onClick={()=>setViewQR(area)} color="var(--tx4)" variant="outline" size="sm"><IC n="print" s={11}/></Btn>
-                  </div>}
-                </div>
-              );
-            })}
+
+      {/* Grid lingkaran per pos */}
+      {Object.entries(PATROL_AREAS).map(([pos,areas])=>{
+        const col = POS_RING[pos]||{ring:"var(--accent)"};
+        return (
+          <div key={pos} style={{marginBottom:20}}>
+            {/* Pos header */}
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:col.ring,flexShrink:0}}/>
+              <div style={{fontSize:11,fontWeight:800,color:col.ring,letterSpacing:.8,textTransform:"uppercase"}}>{pos}</div>
+              <div style={{flex:1,height:1,background:col.ring+"30"}}/>
+              <div style={{fontSize:10,color:"var(--tx4)"}}>
+                {areas.filter(a=>{ const l=patrols.filter(p=>p.areas?.includes(a)).at(-1); return l&&Date.now()-l.ts<3600000; }).length}/{areas.length} ✓
+              </div>
+            </div>
+            {/* Circles */}
+            <div style={{display:"flex",flexWrap:"wrap",gap:10,justifyContent:"flex-start"}}>
+              {areas.map(area=>{
+                const last=patrols.filter(p=>p.areas?.includes(area)).at(-1);
+                return (
+                  <AreaCircle key={area} area={area} pos={pos} last={last} onTap={openArea} canEdit={canEdit}/>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </div>
-      <div style={{background:"var(--card-solid)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 14px"}}>
+        );
+      })}
+
+      {/* Log hari ini */}
+      <div style={{background:"var(--card-solid)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 14px",marginTop:4}}>
         <div style={{fontSize:12,fontWeight:800,color:"var(--accent)",marginBottom:10}}>Log Patroli Hari Ini ({todP.length})</div>
         {todP.length===0&&<div style={{fontSize:11,color:"var(--tx3)"}}>Belum ada patroli</div>}
         {[...todP].reverse().slice(0,15).map(p=>(
           <div key={p.id} style={{padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
-            <div style={{display:"flex",gap:9,alignItems:"center"}}>
-              <div style={{width:32,height:32,background:p.photo?"rgba(167,139,250,.1)":"var(--green-card)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                {p.photo?<span style={{fontSize:15}}>📷</span>:<IC n="qr" s={14} c="var(--accent-light)"/>}
+            <div style={{display:"flex",gap:9,alignItems:"flex-start"}}>
+              <div style={{width:32,height:32,background:"var(--green-card)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:16}}>
+                🔍
               </div>
               <div style={{flex:1}}>
-                <div style={{fontSize:12.5,fontWeight:700,color:"var(--tx2)"}}>{p.areas?.join(", ")}{p.isManual&&<span style={{marginLeft:5,fontSize:9,background:"rgba(255,204,0,.15)",color:"#ffcc00",borderRadius:4,padding:"1px 5px",fontWeight:700}}>MANUAL</span>}</div>
+                <div style={{fontSize:12.5,fontWeight:700,color:"var(--tx2)"}}>{p.areas?.join(", ")}</div>
                 <div style={{fontSize:10.5,color:"var(--tx3)"}}>{p.pos} · {p.officer}</div>
-                {p.notes&&<div style={{fontSize:10.5,color:"var(--tx)",marginTop:1}}>📝 {p.notes}</div>}
+                {p.checks?.length>0&&(
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
+                    {p.checks.map(c=>(
+                      <span key={c} style={{fontSize:9.5,background:"var(--green-card)",border:"1px solid var(--green-border)",borderRadius:5,padding:"1px 6px",color:"var(--ok)",fontWeight:700}}>
+                        {CHECKLIST_ICON[c]||"✓"} {c}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {p.notes&&<div style={{fontSize:10.5,color:"var(--tx)",marginTop:2}}>📝 {p.notes}</div>}
               </div>
               <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3}}>
                 <span style={{fontSize:10.5,fontWeight:700,color:"var(--accent)"}}>{fmtT(p.ts)}</span>
-                {p.photo&&<button onClick={()=>setViewPhoto(p.photo)} style={{background:"rgba(167,139,250,.1)",border:"1px solid #c4b5fd",borderRadius:5,padding:"2px 7px",fontSize:10,color:"#a78bfa",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Lihat Foto</button>}
+                {p.photo&&<button onClick={()=>setViewPhoto(p.photo)} style={{background:"rgba(167,139,250,.1)",border:"1px solid #c4b5fd",borderRadius:5,padding:"2px 7px",fontSize:10,color:"#a78bfa",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Foto</button>}
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      <Modal open={scanOpen} onClose={()=>setScanOpen(false)} title="Scan QR Patroli" noPad><CamScanner onScan={onScan} onClose={()=>setScanOpen(false)}/></Modal>
-
-      <Modal open={manualOpen} onClose={()=>setManualOpen(false)} title="Catat Patroli Manual">
-        <div style={{marginBottom:10,background:"rgba(255,204,0,.08)",border:"1px solid #fcd34d",borderRadius:8,padding:"8px 12px",fontSize:11.5,color:"#ffcc00"}}>⚠️ Gunakan jika kamera bermasalah atau gelap. Foto bukti tetap wajib.</div>
-        <div style={{marginBottom:14,marginTop:12}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Pilih Area</label>
-          <select value={manualArea} onChange={e=>setManualArea(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid var(--border2)",fontSize:13,fontFamily:"inherit",background:"var(--card2)",color:"var(--tx)"}}>
-            <option value="">-- Pilih area patroli --</option>
-            {Object.entries(PATROL_AREAS).map(([pos,areas])=>(
-              <optgroup key={pos} label={pos}>
-                {areas.map(a=><option key={a} value={a}>{a}</option>)}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-        <div style={{display:"flex",gap:8}}><Btn onClick={onManual} color="var(--accent)" size="lg" full>Lanjut →</Btn><Btn onClick={()=>setManualOpen(false)} color="var(--tx4)" variant="outline">Batal</Btn></div>
-      </Modal>
-
-      <Modal open={!!confirm} onClose={()=>setConfirm(null)} title={confirm?.isManual?"Catat Patroli Manual":"Konfirmasi Patroli"}>
+      {/* Modal Checklist Patroli */}
+      <Modal open={!!confirm} onClose={()=>setConfirm(null)} title="Checklist Patroli">
         {confirm&&(
           <div>
-            <div style={{background:"var(--green-card)",borderRadius:10,padding:"12px",marginBottom:14,textAlign:"center"}}>
-              <div style={{fontSize:12,color:"var(--tx3)"}}>{confirm.isManual?"Area Dipilih Manual":"Titik Patroli"}</div>
-              <div style={{fontSize:20,fontWeight:900,color:"var(--ok)"}}>{confirm.area}</div>
-              {confirm.isManual&&<div style={{fontSize:10,color:"#ffcc00",marginTop:4}}>⚠️ Mode manual — foto bukti wajib</div>}
-            </div>
-            {/* Nama petugas: otomatis dari login, admin bisa pilih */}
-            {isAdmin ? (
-              <Inp label="Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} as="select">
-                <option value="">— Pilih Anggota —</option>
-                {Object.values(REGU).flat().map(m=><option key={m} value={m}>{m}</option>)}
-              </Inp>
-            ) : (
-              <div style={{marginBottom:11}}>
-                <label style={{display:"block",fontSize:11,color:"var(--accent)",marginBottom:4,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>Petugas</label>
-                <div style={{background:"var(--card2)",border:"1.5px solid var(--border2)",borderRadius:9,padding:"9px 12px",fontSize:13.5,color:"var(--tx)",display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:14}}>👤</span>
-                  <span style={{fontWeight:700}}>{officer||currentUser?.name||"—"}</span>
-                  <span style={{marginLeft:"auto",fontSize:10,color:"var(--tx3)",background:"var(--card3)",borderRadius:5,padding:"2px 7px"}}>Login aktif</span>
+            {/* Area header */}
+            <div style={{display:"flex",alignItems:"center",gap:14,background:"var(--green-card)",border:"1px solid var(--green-border)",borderRadius:12,padding:"12px 16px",marginBottom:16}}>
+              <div style={{
+                width:56,height:56,borderRadius:"50%",
+                border:`3px solid ${POS_RING[confirm.pos]?.ring||"var(--accent)"}`,
+                background:(POS_RING[confirm.pos]?.fill)||"var(--pill-active)",
+                display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+              }}>
+                <div style={{width:40,height:40,borderRadius:"50%",border:`1.5px solid ${POS_RING[confirm.pos]?.ring+"66"||"#fff3"}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <span style={{fontSize:9,fontWeight:900,color:POS_RING[confirm.pos]?.txt||"var(--accent-light)",textAlign:"center",lineHeight:1.2}}>{confirm.area}</span>
                 </div>
               </div>
+              <div>
+                <div style={{fontSize:16,fontWeight:900,color:"var(--tx)"}}>{confirm.area}</div>
+                <div style={{fontSize:11,color:"var(--tx3)",marginTop:2}}>{confirm.pos}</div>
+              </div>
+            </div>
+
+            {/* Checklist */}
+            <div style={{fontSize:11,fontWeight:800,color:"var(--tx3)",marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>Cek Kondisi</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+              {CHECKLIST_ITEMS.map(item=>{
+                const checked=checks[item];
+                return (
+                  <button key={item} onClick={()=>toggleCheck(item)} style={{
+                    display:"flex",alignItems:"center",gap:12,
+                    background:checked?"var(--green-card)":"var(--card2)",
+                    border:`1.5px solid ${checked?"var(--ok)":"var(--border2)"}`,
+                    borderRadius:10,padding:"11px 14px",cursor:"pointer",
+                    fontFamily:"inherit",textAlign:"left",transition:"all .15s",
+                  }}>
+                    <div style={{
+                      width:22,height:22,borderRadius:6,flexShrink:0,
+                      background:checked?"var(--ok)":"transparent",
+                      border:`2px solid ${checked?"var(--ok)":"var(--border2)"}`,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      transition:"all .15s",
+                    }}>
+                      {checked&&<span style={{color:"#fff",fontSize:13,fontWeight:900}}>✓</span>}
+                    </div>
+                    <span style={{fontSize:13,fontWeight:600,color:checked?"var(--ok)":"var(--tx2)"}}>{CHECKLIST_ICON[item]||""} {item}</span>
+                    <span style={{marginLeft:"auto",fontSize:11,color:checked?"var(--ok)":"var(--tx4)",fontWeight:700}}>
+                      {checked?"Aman":"—"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Petugas */}
+            {isAdmin?(
+              <Inp label="Petugas" value={officer} onChange={e=>setOfficer(e.target.value)} as="select">
+                <option value="">— Pilih —</option>
+                {Object.values(REGU).flat().map(m=><option key={m} value={m}>{m}</option>)}
+              </Inp>
+            ):(
+              <div style={{marginBottom:11,display:"flex",alignItems:"center",gap:8,background:"var(--card2)",border:"1px solid var(--border2)",borderRadius:9,padding:"9px 12px"}}>
+                <span style={{fontSize:14}}>👤</span>
+                <span style={{fontSize:13,fontWeight:700,color:"var(--tx)"}}>{officer}</span>
+                <span style={{marginLeft:"auto",fontSize:10,color:"var(--tx3)"}}>Login aktif</span>
+              </div>
             )}
-            <Inp label="Catatan Kondisi" value={notes} onChange={e=>setNotes(e.target.value)} as="textarea" placeholder="Kondisi titik patroli..."/>
+
+            {/* Catatan */}
+            <Inp label="Catatan (opsional)" value={notes} onChange={e=>setNotes(e.target.value)} as="textarea" placeholder="Kondisi khusus, temuan, dll..."/>
+
+            {/* Foto WAJIB */}
             <div style={{marginBottom:14}}>
-              <label style={{display:"block",fontSize:11,color:photo?"var(--ok)":"#dc2626",marginBottom:6,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>📷 Foto Bukti — WAJIB</label>
+              <label style={{display:"block",fontSize:11,color:photo?"var(--ok)":"#dc2626",marginBottom:6,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>
+                📷 Foto Bukti — WAJIB
+              </label>
               {!photo?(
                 <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"rgba(220,38,38,.07)",border:"2px dashed #fca5a5",borderRadius:10,padding:"16px 12px",cursor:"pointer",color:"#dc2626",fontWeight:700,fontSize:13}}>
-                  <IC n="cam" s={20} c="#dc2626"/>
-                  Ambil Foto Sekarang
+                  <IC n="cam" s={20} c="#dc2626"/> Ambil Foto Sekarang
                   <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{display:"none"}}/>
                 </label>
               ):(
-                <div style={{position:"relative",display:"inline-block",width:"100%"}}>
-                  <img src={photo} alt="bukti patroli" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:10,border:"2px solid #86efac",display:"block"}}/>
-                  <button onClick={removePhoto} style={{position:"absolute",top:6,right:6,background:"rgba(220,38,38,.85)",border:"none",borderRadius:6,color:"#fff",fontSize:11,fontWeight:800,padding:"4px 9px",cursor:"pointer",fontFamily:"inherit"}}>✕ Ganti</button>
+                <div style={{position:"relative",width:"100%"}}>
+                  <img src={photo} alt="bukti" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:10,border:"2px solid #86efac",display:"block"}}/>
+                  <button onClick={()=>{setPhoto(null);if(fileRef.current)fileRef.current.value="";}} style={{position:"absolute",top:6,right:6,background:"rgba(220,38,38,.85)",border:"none",borderRadius:6,color:"#fff",fontSize:11,fontWeight:800,padding:"4px 9px",cursor:"pointer",fontFamily:"inherit"}}>✕ Ganti</button>
                   <div style={{position:"absolute",bottom:6,left:6,background:"rgba(5,150,105,.85)",borderRadius:6,padding:"3px 8px",fontSize:10,color:"#fff",fontWeight:700}}>✓ Foto siap</div>
                 </div>
               )}
             </div>
+
             <div style={{display:"flex",gap:8}}>
-              <Btn onClick={doP} color={photo?"var(--ok)":"var(--tx4)"} size="lg" full><IC n="ok" s={14}/> Catat Patroli</Btn>
+              <Btn onClick={doPatrol} color={photo?"var(--ok)":"var(--tx4)"} size="lg" full><IC n="ok" s={14}/> Simpan Patroli</Btn>
               <Btn onClick={()=>setConfirm(null)} color="var(--tx4)" variant="outline">Batal</Btn>
             </div>
           </div>
         )}
       </Modal>
-      <Modal open={!!viewQR} onClose={()=>setViewQR(null)} title={`Cetak QR: ${viewQR}`}>
-        {viewQR&&(
-          <div style={{textAlign:"center"}}>
-            <div style={{background:"var(--card-solid)",border:"2px solid var(--qr-border)",borderRadius:14,padding:18,display:"inline-block",marginBottom:10}}>
-              <QRSvg value={encQR(viewQR)} size={190}/>
-              <div style={{marginTop:8,fontSize:13,fontWeight:800,color:"var(--tx2)"}}>{viewQR}</div>
-              <div style={{fontSize:10,color:"var(--tx3)"}}>BBPKA II Jatinangor</div>
-            </div>
-            <div style={{color:"var(--tx3)",fontSize:12,marginBottom:12}}>Screenshot & cetak, tempel di {viewQR}</div>
-            <Btn onClick={()=>setViewQR(null)} color="var(--accent)">Tutup</Btn>
-          </div>
-        )}
-      </Modal>
+
       <Modal open={!!viewPhoto} onClose={()=>setViewPhoto(null)} title="Foto Bukti Patroli">
-        {viewPhoto&&(
-          <div style={{textAlign:"center"}}>
-            <img src={viewPhoto} alt="bukti patroli" style={{width:"100%",maxHeight:400,objectFit:"contain",borderRadius:10,marginBottom:14}}/>
-            <Btn onClick={()=>setViewPhoto(null)} color="var(--accent)">Tutup</Btn>
-          </div>
-        )}
+        {viewPhoto&&<div style={{textAlign:"center"}}><img src={viewPhoto} alt="bukti" style={{width:"100%",maxHeight:400,objectFit:"contain",borderRadius:10,marginBottom:14}}/><Btn onClick={()=>setViewPhoto(null)} color="var(--accent)">Tutup</Btn></div>}
       </Modal>
     </div>
   );
