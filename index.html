@@ -435,14 +435,28 @@
     }
   }
 
-  // Flush antrian saat kembali online
+  // Flush antrian saat kembali online + catat event koneksi
   window.addEventListener("online", async () => {
+    // Catat event kembali online
+    try {
+      await writeAuditLog({ action:"KONEKSI_ONLINE", info:"Perangkat kembali terhubung ke jaringan" });
+    } catch {}
+    // Flush antrian offline
     try {
       const q = JSON.parse(localStorage.getItem("audit_queue")||"[]");
       if (!q.length) return;
       for (const entry of q)
         await addDoc(collection(db, "sipamdal_audit"), {...entry, ts:serverTimestamp(), flushed:true});
       localStorage.removeItem("audit_queue");
+    } catch {}
+  });
+
+  // Catat event offline
+  window.addEventListener("offline", () => {
+    try {
+      const q = JSON.parse(localStorage.getItem("audit_queue")||"[]");
+      q.push({ action:"KONEKSI_OFFLINE", info:"Perangkat kehilangan koneksi jaringan", tsLocal: new Date().toISOString() });
+      localStorage.setItem("audit_queue", JSON.stringify(q.slice(-50)));
     } catch {}
   });
 
@@ -585,7 +599,7 @@ function useFS(key, init) {
 // Gunakan useFS untuk semua data kolaboratif
 const useData = useFS;
 
-// Kompres foto agar tidak melebihi batas Firestore (1MB)
+// Kompres foto agar tidak melebihi batas Firestore (1MB) + tambah timestamp overlay
 function kompressFoto(dataUrl, maxW=400, quality=0.25) {
   return new Promise(resolve => {
     const img = new Image();
@@ -594,7 +608,28 @@ function kompressFoto(dataUrl, maxW=400, quality=0.25) {
       const ratio = Math.min(1, maxW / img.width);
       canvas.width = img.width * ratio;
       canvas.height = img.height * ratio;
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // ── Timestamp overlay ────────────────────────────────────────
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2,"0");
+      const tgl = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
+      const jam = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      const stampText = `SIPAMDAL  ${tgl}  ${jam}`;
+      const fontSize = Math.max(10, Math.floor(canvas.width / 26));
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textBaseline = "bottom";
+      const txtW = ctx.measureText(stampText).width;
+      const padX = 7, padY = 5;
+      const bx = canvas.width - txtW - padX*2 - 4;
+      const by = canvas.height - fontSize - padY*2 - 4;
+      ctx.fillStyle = "rgba(0,0,0,0.58)";
+      ctx.fillRect(bx, by, txtW + padX*2, fontSize + padY*2 + 2);
+      ctx.fillStyle = "#ffff00";
+      ctx.fillText(stampText, bx + padX, canvas.height - padY - 4);
+      // ─────────────────────────────────────────────────────────────
+
       const compressed = canvas.toDataURL("image/jpeg", quality);
       // Jika masih > 100KB, kompres lagi
       if (compressed.length > 130000) {
@@ -4404,7 +4439,7 @@ const NAV_TABS_ADMIN = [
 // ═══════════════════════════════════════════════════════════════════════════════
 // RESET DATA LAMA — jalankan sekali saat versi baru pertama kali dibuka
 // ═══════════════════════════════════════════════════════════════════════════════
-const APP_VERSION = "v2.1-clean"; // ganti versi ini untuk trigger reset ulang
+const APP_VERSION = "v2.1-clean-4"; // ganti versi ini untuk trigger reset ulang
 (function clearOldData() {
   if (localStorage.getItem("pad_app_version") === APP_VERSION) return;
   const KEEP = ["pad_theme", "pad_pins", "pad_admin_pin", "pad_app_version"];
