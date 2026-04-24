@@ -439,88 +439,97 @@
   window.__FB = { db, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, getDocs, addDoc, serverTimestamp, query, orderBy, limit, writeAuditLog };
 
   // ── Signal ke React bahwa FB sudah siap + track koneksi ──────────────────────
-  // Gunakan onSnapshot ke doc kecil sebagai probe koneksi
-  // Dokumen khusus probe — tidak pernah ditulis oleh fitur lain
-  const probe = doc(db, "sipamdal", "__ping__");
-  let unsubProbe = null;
-  let wasOffline = false; // lacak apakah sebelumnya offline
-  let offlineTimer = null; // debounce offline agar tidak kedip
+  // Strategi: gunakan onSnapshot ke koleksi data nyata sebagai probe utama.
+  // Fallback: fetch HTTP ke Firestore REST API setiap 10 detik.
+  // Ini menghindari masalah rules yang memblokir doc __ping__.
+  let wasOffline = false;
+  let pingInterval = null;
 
-  function startProbe() {
-    if (unsubProbe) return;
-    unsubProbe = onSnapshot(probe, { includeMetadataChanges: true },
-      async () => {
-        // Firebase berhasil terhubung
-        const nowOnline = !window.__FB_ONLINE; // baru saja kembali online
-        // Batalkan timer offline jika ada (sinyal hanya sesaat putus)
-        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
-        window.__FB_ONLINE = true;
-        window.dispatchEvent(new Event("fb_online"));
-
-        // Jika sebelumnya offline, catat kembali online + flush antrian
-        if (wasOffline) {
-          wasOffline = false;
-          const tsOnline = new Date().toISOString();
-          try {
-            // Catat event KEMBALI_ONLINE ke Firestore
-            await addDoc(collection(db, "sipamdal_audit"), {
-              action: "KEMBALI_ONLINE",
-              info: "Koneksi Firebase pulih",
-              tsLocal: tsOnline,
-              ts: serverTimestamp()
-            });
-          } catch {}
-          // Flush antrian yang tersimpan saat offline
-          try {
-            const q = JSON.parse(localStorage.getItem("audit_queue") || "[]");
-            if (q.length) {
-              for (const entry of q) {
-                await addDoc(collection(db, "sipamdal_audit"), { ...entry, ts: serverTimestamp(), flushed: true });
-              }
-              localStorage.removeItem("audit_queue");
-            }
-          } catch {}
-          // Flush pending data writes saat offline
-          try {
-            const pending = JSON.parse(localStorage.getItem("pad_pending_writes") || "{}");
-            const keys = Object.keys(pending);
-            if (keys.length) {
-              const { doc: fbDoc, setDoc } = window.__FB;
-              for (const k of keys) {
-                await setDoc(fbDoc(db, "sipamdal", k), pending[k]);
-              }
-              localStorage.removeItem("pad_pending_writes");
-            }
-          } catch {}
+  function setOnline() {
+    if (window.__FB_ONLINE) return;
+    window.__FB_ONLINE = true;
+    window.dispatchEvent(new Event("fb_online"));
+    if (wasOffline) {
+      wasOffline = false;
+      // Flush audit queue
+      try {
+        const q = JSON.parse(localStorage.getItem("audit_queue") || "[]");
+        if (q.length) {
+          addDoc(collection(db, "sipamdal_audit"), { action: "KEMBALI_ONLINE", info: "Koneksi Firebase pulih", tsLocal: new Date().toISOString(), ts: serverTimestamp() }).catch(()=>{});
+          for (const entry of q) {
+            addDoc(collection(db, "sipamdal_audit"), { ...entry, ts: serverTimestamp(), flushed: true }).catch(()=>{});
+          }
+          localStorage.removeItem("audit_queue");
         }
-      },
-      () => {
-        // Firebase terputus — debounce 4 detik agar tidak kedip karena sinyal lemah sesaat
-        if (offlineTimer) return;
-        offlineTimer = setTimeout(() => {
-          offlineTimer = null;
-          // Hanya set offline kalau memang belum online lagi
-          if (window.__FB_ONLINE) return;
-          wasOffline = true;
-          window.dispatchEvent(new Event("fb_offline"));
-          // Catat event OFFLINE ke antrian lokal
-          try {
-            const q = JSON.parse(localStorage.getItem("audit_queue") || "[]");
-            q.push({ action: "KONEKSI_OFFLINE", info: "Koneksi Firebase terputus", tsLocal: new Date().toISOString() });
-            localStorage.setItem("audit_queue", JSON.stringify(q.slice(-50)));
-          } catch {}
-        }, 4000);
-      }
-    );
+      } catch {}
+      // Flush pending data writes
+      try {
+        const pending = JSON.parse(localStorage.getItem("pad_pending_writes") || "{}");
+        const keys = Object.keys(pending);
+        if (keys.length) {
+          for (const k of keys) {
+            setDoc(doc(db, "sipamdal", k), pending[k]).catch(()=>{});
+          }
+          localStorage.removeItem("pad_pending_writes");
+        }
+      } catch {}
+    }
   }
 
-  // Mulai probe setelah auth selesai
-  signInAnonymously(auth).then(startProbe).catch(startProbe);
-  window.addEventListener("offline", () => {
+  function setOffline() {
+    if (window.__FB_ONLINE === false && wasOffline) return;
     window.__FB_ONLINE = false;
     wasOffline = true;
     window.dispatchEvent(new Event("fb_offline"));
-  });
+    try {
+      const q = JSON.parse(localStorage.getItem("audit_queue") || "[]");
+      q.push({ action: "KONEKSI_OFFLINE", info: "Koneksi Firebase terputus", tsLocal: new Date().toISOString() });
+      localStorage.setItem("audit_queue", JSON.stringify(q.slice(-50)));
+    } catch {}
+  }
+
+  // Ping via fetch HTTP — tidak bergantung pada Firestore rules
+  async function pingFirebase() {
+    try {
+      // HEAD request ke Firebase hosting / googleapis — 2xx atau 4xx = server reachable = online
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(
+        "https://firestore.googleapis.com/v1/projects/sipamdal/databases/(default)/documents/sipamdal/pad_pos_assign?fields=__localVer",
+        { method: "GET", cache: "no-store", signal: ctrl.signal }
+      );
+      clearTimeout(t);
+      if (res.status < 500) { setOnline(); return; }
+    } catch {}
+    // Fallback no-cors (tidak bisa baca status tapi jika berhasil = online)
+    try {
+      const ctrl2 = new AbortController();
+      const t2 = setTimeout(() => ctrl2.abort(), 4000);
+      await fetch("https://firestore.googleapis.com/", { method: "HEAD", cache: "no-store", mode: "no-cors", signal: ctrl2.signal });
+      clearTimeout(t2);
+      setOnline(); return;
+    } catch {}
+    if (!navigator.onLine) setOffline();
+  }
+
+  function startProbe() {
+    // Probe Firestore onSnapshot ke dokumen data nyata
+    try {
+      onSnapshot(
+        doc(db, "sipamdal", "pad_pos_assign"),
+        { includeMetadataChanges: true },
+        (snap) => { if (!snap.metadata.fromCache) setOnline(); },
+        () => { pingFirebase(); }
+      );
+    } catch {}
+    // Ping HTTP langsung + periodik
+    pingFirebase();
+    pingInterval = setInterval(pingFirebase, 10000);
+  }
+
+  signInAnonymously(auth).then(startProbe).catch(startProbe);
+  window.addEventListener("online",  () => pingFirebase());
+  window.addEventListener("offline", () => setOffline());
 </script>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -4560,7 +4569,7 @@ function App() {
   // ── Track status koneksi Firebase via custom event dari module script ──
   useEffect(() => {
     // Sync state awal dengan window.__FB_ONLINE (mungkin sudah di-set sebelum React mount)
-    if (window.__FB_ONLINE !== undefined) setFbOnline(window.__FB_ONLINE);
+    if (window.__FB_ONLINE !== undefined) setFbOnline(!!window.__FB_ONLINE);
 
     let debounceTimer = null;
     const onOnline  = () => {
@@ -4573,10 +4582,19 @@ function App() {
     };
     window.addEventListener("fb_online",  onOnline);
     window.addEventListener("fb_offline", onOffline);
+
+    // Fallback polling: sinkronkan setiap 2 detik jika event terlewat (race condition)
+    const poll = setInterval(() => {
+      if (window.__FB_ONLINE !== undefined) {
+        setFbOnline(v => v !== !!window.__FB_ONLINE ? !!window.__FB_ONLINE : v);
+      }
+    }, 2000);
+
     return () => {
       window.removeEventListener("fb_online",  onOnline);
       window.removeEventListener("fb_offline", onOffline);
       if (debounceTimer) clearTimeout(debounceTimer);
+      clearInterval(poll);
     };
   }, []);
   const AUTO_LOGOUT_MS = 15 * 60 * 1000; // 15 menit
