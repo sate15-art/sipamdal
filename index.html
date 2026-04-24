@@ -498,10 +498,10 @@ const POS_CAP = { "Pos Utama": 2, "Pos Asrama": 1, "Pos Guest House": 1, "Gedung
 const POS_COL = { "Pos Utama": "#5b9bd5", "Pos Asrama": "#6aaa88", "Pos Guest House": "#8882b8", "Gedung Utama": "#7090a8" };
 
 const PATROL_AREAS = {
-  "Pos Asrama": ["Gedung Asrama 2","Ruang Makan 2","Klinik","Gedung Kelas E","Gedung Kelas A","Ruang Makan 1"],
-  "Gedung Utama": ["Gedung Utama","Gedung WI","Aula","Gedung Sarpras","Gedung Kepegawaian","Gedung Arsip"],
+  "Pos Asrama": ["Gedung Asrama 2","Ruang Makan 2","Klinik","Gedung Kelas E","Gedung Kelas A","Ruang Makan 1","Gedung Genset"],
+  "Gedung Utama": ["Gedung Utama","Gedung WI","Aula","Gedung Sarpras","Gedung Kepegawaian","Gedung Arsip","Area Parkir"],
   "Pos Utama": ["Area Pos Utama","Taman","Gedung Kantin","Masjid"],
-  "Pos Guest House": ["Guest House 1","Guest House 2","Guest House 3","Guest House 4","Gedung GOR"],
+  "Pos Guest House": ["Guest House 1","Guest House 2","Guest House 3","Guest House 4","Guest House 5","Gedung GOR"],
 };
 
 const QR_PREFIX = "BBPKA2-PAMDAL-";
@@ -1320,21 +1320,24 @@ function PosTab({reguHari,posAssign,setPosAssign,posRollingLog,setPosRollingLog,
     setPosAssign(updated); setConfirm(null); toast(`✓ ${nameToAssign} → ${confirm.pos}!`);
   };
 
-  // ── Rolling pos: pindah anggota dari pos lama ke pos baru ──
+  // ── Rolling pos: tukar posisi dua anggota ──
   const doRolling=()=>{
     if(!rollingFrom||!rollingTo){toast("Pilih anggota & pos tujuan!",false);return;}
-    if(rollingFrom===rollingTo){toast("Pos asal dan tujuan sama!",false);return;}
-    // Cari siapa yg ada di rollingFrom pos
+    if(rollingFrom===rollingTo){toast("Pilih anggota yang berbeda!",false);return;}
+    // Temukan pos masing-masing anggota
     const fromPos = Object.entries(posAssign).find(([,ms])=>ms?.includes(rollingFrom))?.[0];
-    const toAsgn = posAssign[rollingTo]||[]; const cap=POS_CAP[rollingTo]||1;
-    if(toAsgn.length>=cap){toast(`${rollingTo} sudah penuh!`,false);return;}
-    const updated = {...posAssign};
-    if(fromPos) updated[fromPos]=(updated[fromPos]||[]).filter(x=>x!==rollingFrom);
-    updated[rollingTo]=[...(updated[rollingTo]||[]),rollingFrom];
+    const toPos   = Object.entries(posAssign).find(([,ms])=>ms?.includes(rollingTo))?.[0];
+    if(!fromPos){toast(`${rollingFrom} belum ditempatkan di pos mana pun!`,false);return;}
+    if(!toPos){toast(`${rollingTo} belum ditempatkan di pos mana pun!`,false);return;}
+    if(fromPos===toPos){toast("Kedua anggota sudah ada di pos yang sama!",false);return;}
+    // Tukar posisi
+    const updated={...posAssign};
+    updated[fromPos]=[...(updated[fromPos]||[]).filter(x=>x!==rollingFrom),rollingTo];
+    updated[toPos]=[...(updated[toPos]||[]).filter(x=>x!==rollingTo),rollingFrom];
     setPosAssign(updated);
-    const log={id:Date.now(),ts:Date.now(),member:rollingFrom,fromPos:fromPos||"—",toPos:rollingTo};
+    const log={id:Date.now(),ts:Date.now(),member:`${rollingFrom} ⇄ ${rollingTo}`,fromPos,toPos};
     setPosRollingLog([...(posRollingLog||[]),log]);
-    toast(`Rolling: ${rollingFrom} → ${rollingTo}!`);
+    toast(`🔄 ${rollingFrom} (${fromPos}) ⇄ ${rollingTo} (${toPos})`);
     setRollingFrom(""); setRollingTo("");
   };
 
@@ -1411,19 +1414,30 @@ function PosTab({reguHari,posAssign,setPosAssign,posRollingLog,setPosRollingLog,
       {mode==="rolling"&&canEdit&&(
         <div>
           <div style={{background:"rgba(0,170,255,.1)",border:"1.5px solid #67e8f9",borderRadius:12,padding:"14px 16px",marginBottom:14}}>
-            <div style={{fontSize:13,fontWeight:800,color:"var(--accent)",marginBottom:10}}>🔄 Pindah / Rolling Pos Jaga</div>
-            <Inp label="Anggota yang dipindah" value={rollingFrom} onChange={e=>setRollingFrom(e.target.value)} as="select">
-              <option value="">— Pilih Anggota —</option>
+            <div style={{fontSize:13,fontWeight:800,color:"var(--accent)",marginBottom:4}}>🔄 Tukar Posisi (Rolling)</div>
+            <div style={{fontSize:11,color:"var(--tx3)",marginBottom:12}}>Pilih dua anggota yang akan saling bertukar pos.</div>
+            <Inp label="Anggota A (yang dipindah)" value={rollingFrom} onChange={e=>setRollingFrom(e.target.value)} as="select">
+              <option value="">— Pilih Anggota A —</option>
               {members.map(m=>{
                 const curPos=Object.entries(posAssign).find(([,ms])=>ms?.includes(m))?.[0]||"Belum ditempatkan";
                 return <option key={m} value={m}>{m} ({curPos})</option>;
               })}
             </Inp>
-            <Inp label="Pindah ke pos" value={rollingTo} onChange={e=>setRollingTo(e.target.value)} as="select">
-              <option value="">— Pilih Pos Tujuan —</option>
-              {POS_LIST.map(p=>{
-                const asgn=posAssign[p]||[]; const cap=POS_CAP[p]||1;
-                return <option key={p} value={p} disabled={asgn.length>=cap}>{p} ({asgn.length}/{cap})</option>;
+            {/* Preview panah tukar */}
+            {rollingFrom&&rollingTo&&(()=>{
+              const posA=Object.entries(posAssign).find(([,ms])=>ms?.includes(rollingFrom))?.[0]||"—";
+              const posB=Object.entries(posAssign).find(([,ms])=>ms?.includes(rollingTo))?.[0]||"—";
+              return (
+                <div style={{textAlign:"center",padding:"6px 0",fontSize:12,color:"var(--accent)",fontWeight:700}}>
+                  {rollingFrom} [{posA}] ⇄ {rollingTo} [{posB}]
+                </div>
+              );
+            })()}
+            <Inp label="Anggota B (ditukar dengan)" value={rollingTo} onChange={e=>setRollingTo(e.target.value)} as="select">
+              <option value="">— Pilih Anggota B —</option>
+              {members.filter(m=>m!==rollingFrom).map(m=>{
+                const curPos=Object.entries(posAssign).find(([,ms])=>ms?.includes(m))?.[0]||"Belum ditempatkan";
+                return <option key={m} value={m}>{m} ({curPos})</option>;
               })}
             </Inp>
             <div style={{display:"flex",gap:8,marginTop:4}}>
@@ -1440,7 +1454,7 @@ function PosTab({reguHari,posAssign,setPosAssign,posRollingLog,setPosRollingLog,
                 <div key={r.id} style={{padding:"6px 0",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:13}}>🔄</span>
                   <div style={{flex:1}}>
-                    <div style={{fontSize:12.5,fontWeight:700,color:"var(--tx2)"}}>{r.member}: {r.fromPos} → {r.toPos}</div>
+                    <div style={{fontSize:12.5,fontWeight:700,color:"var(--tx2)"}}>{r.member}</div>
                     <div style={{fontSize:10.5,color:"var(--tx3)"}}>{fmtT(r.ts)}</div>
                   </div>
                 </div>
@@ -4218,11 +4232,8 @@ function SearchTab({ packages, guests, mutations, incidents, patrols }) {
 // ─── KELUAR SEMENTARA ────────────────────────────────────────────────────────
 function KeluarTab({ keluarData, setKeluarData, toast, canEdit, isAdmin, now }) {
   const [open, setOpen] = useState(false);
-  const [fm, setFm] = useState({ nama:"", tujuan:"Makan Malam", keterangan:"", estimasi:"" });
+  const [fm, setFm] = useState({ nama:"", plat:"" });
   const f = (k,v) => setFm(p=>({...p,[k]:v}));
-
-  const TUJUAN_LIST = ["Makan Malam","Makan Siang","Hiburan / Jalan-jalan","Warung Kopi","Minimarket","Lainnya"];
-  const TUJUAN_ICON = {"Makan Malam":"🍽","Makan Siang":"🍱","Hiburan / Jalan-jalan":"🎭","Warung Kopi":"☕","Minimarket":"🏪","Lainnya":"📍"};
 
   const sedangDiLuar = keluarData.filter(k => !k.kembali);
   const sudahKembali = keluarData.filter(k => k.kembali);
@@ -4231,9 +4242,9 @@ function KeluarTab({ keluarData, setKeluarData, toast, canEdit, isAdmin, now }) 
     if (!fm.nama.trim()) { toast("Nama peserta wajib diisi!", false); return; }
     const entry = { ...fm, id: Date.now(), tsKeluar: Date.now(), kembali: null, tsKembali: null };
     setKeluarData([...keluarData, entry]);
-    setFm({ nama:"", tujuan:"Makan Malam", keterangan:"", estimasi:"" });
+    setFm({ nama:"", plat:"" });
     setOpen(false);
-    toast(`${fm.nama} dicatat keluar — ${fm.tujuan}`);
+    toast(`${fm.nama} dicatat keluar${fm.plat ? " — " + fm.plat.toUpperCase() : ""}`);
   };
 
   const tandaiKembali = (id) => {
@@ -4295,11 +4306,11 @@ function KeluarTab({ keluarData, setKeluarData, toast, canEdit, isAdmin, now }) 
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:5}}>
                 <div>
                   <div style={{fontSize:14,fontWeight:800,color:"var(--tx)"}}>{k.nama}</div>
-                  <div style={{fontSize:12,color:"#fb923c",fontWeight:600,marginTop:2}}>
-                    {TUJUAN_ICON[k.tujuan]||"📍"} {k.tujuan}
-                  </div>
-                  {k.keterangan && <div style={{fontSize:11,color:"var(--tx3)",marginTop:2}}>📝 {k.keterangan}</div>}
-                  {k.estimasi && <div style={{fontSize:11,color:"#fb923c",marginTop:2}}>⏰ Estimasi kembali: {k.estimasi}</div>}
+                  {k.plat && (
+                    <div style={{fontSize:13,color:"#fb923c",fontWeight:700,marginTop:3,background:"rgba(251,146,60,.15)",display:"inline-block",padding:"2px 8px",borderRadius:6,letterSpacing:1}}>
+                      🚗 {k.plat.toUpperCase()}
+                    </div>
+                  )}
                 </div>
                 <div style={{textAlign:"right",flexShrink:0}}>
                   <div style={{fontSize:10.5,color:"var(--tx3)"}}>Keluar {fmtT(k.tsKeluar)}</div>
@@ -4336,7 +4347,7 @@ function KeluarTab({ keluarData, setKeluarData, toast, canEdit, isAdmin, now }) 
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
                   <div style={{fontSize:13,fontWeight:700,color:"var(--tx2)"}}>{k.nama}</div>
-                  <div style={{fontSize:11,color:"var(--tx4)"}}>{TUJUAN_ICON[k.tujuan]||"📍"} {k.tujuan}</div>
+                  {k.plat && <div style={{fontSize:11,color:"var(--tx4)"}}>🚗 {k.plat.toUpperCase()}</div>}
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:10,color:"var(--tx4)"}}>Keluar {fmtT(k.tsKeluar)}</div>
@@ -4364,11 +4375,7 @@ function KeluarTab({ keluarData, setKeluarData, toast, canEdit, isAdmin, now }) 
       {/* Modal catat keluar */}
       <Modal open={open} onClose={() => setOpen(false)} title="Catat Peserta Keluar">
         <Inp label="Nama Peserta" value={fm.nama} onChange={e=>f("nama",e.target.value)} placeholder="Nama lengkap peserta"/>
-        <Inp label="Tujuan" value={fm.tujuan} onChange={e=>f("tujuan",e.target.value)} as="select">
-          {TUJUAN_LIST.map(t => <option key={t}>{t}</option>)}
-        </Inp>
-        <Inp label="Keterangan (opsional)" value={fm.keterangan} onChange={e=>f("keterangan",e.target.value)} placeholder="Mis: makan di warteg dekat gerbang"/>
-        <Inp label="Estimasi Kembali (opsional)" value={fm.estimasi} onChange={e=>f("estimasi",e.target.value)} placeholder="Contoh: 21:30 / 1 jam lagi"/>
+        <Inp label="Plat Nomor Kendaraan (opsional)" value={fm.plat} onChange={e=>f("plat",e.target.value.toUpperCase())} placeholder="Contoh: D 1234 ABC"/>
         <div style={{display:"flex",gap:8}}>
           <Btn onClick={submit} color="var(--y)" sx={{color:"#1a1a1a"}} size="lg">Simpan</Btn>
           <Btn onClick={() => setOpen(false)} color="var(--tx4)" variant="outline" size="lg">Batal</Btn>
@@ -4563,10 +4570,6 @@ function App() {
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        {/* Settings icon (no theme pill in header) */}
-        <button onClick={() => setSettingsOpen(true)} style={{background:"none",border:"none",cursor:"pointer",padding:6,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--tx3)",marginRight:4}} title="Pengaturan">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
         {/* Theme toggle pill in header */}
         <div className="theme-pill" style={{marginRight:4}}>
           {[["dark","🌙"],["light","☀️"]].map(([v,icon])=>(
@@ -4636,26 +4639,7 @@ function App() {
         </div>
       )}
 
-      {/* FAB — Aksi Cepat */}
-      {canEdit && (
-        <div className="fab-container">
-          {fabOpen && [
-            {icon:"🔍", label:"Catat Patroli", tab:"patrol", color:"#38c172"},
-            {icon:"⚠️", label:"Laporkan Insiden",tab:"incident",color:"#e53e3e"},
-            {icon:"📋", label:"Serah Terima",  tab:"mutation",color:"var(--tx2)"},
-          ].map((a,i)=>(
-            <div key={a.tab} className="fab-item" style={{animationDelay:`${i*0.04}s`}}>
-              <span className="fab-label">{a.label}</span>
-              <button className="fab-btn" style={{background:a.color}} onClick={()=>{ setTab(a.tab); setFabOpen(false); setMoreOpen(false); }}>
-                <span>{a.icon}</span>
-              </button>
-            </div>
-          ))}
-          <button className={`fab-main ${fabOpen?"open":""}`} onClick={()=>setFabOpen(v=>!v)}>
-            +
-          </button>
-        </div>
-      )}
+      {/* FAB dihapus */}
 
       {/* CONTENT */}
       <main style={{ flex: 1, padding: "14px 14px 0", overflowY: "auto" }}>
