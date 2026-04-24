@@ -3206,12 +3206,12 @@ function AdminMemberTab({ patrols, standJaga, incidents, mutations }) {
     const FS_COLLECTIONS = {
       audit:"sipamdal_audit", login:"sipamdal_login_history",
     };
+    let fsError = false;
     try {
-      // Hapus localStorage
+      // Hapus localStorage dulu (selalu berhasil)
       for (const [key, lsKey] of Object.entries(LS_MAP)) {
         if (!resetDataItems[key]) continue;
         if (key === "pos") {
-          // hapus semua pad_pos_* keys
           Object.keys(localStorage).filter(k=>k.startsWith("pad_pos_")).forEach(k=>localStorage.removeItem(k));
         } else {
           localStorage.removeItem(lsKey);
@@ -3221,15 +3221,16 @@ function AdminMemberTab({ patrols, standJaga, incidents, mutations }) {
         localStorage.removeItem("pad_pins");
         localStorage.removeItem("pad_admin_pin");
       }
-      // Hapus Firestore collections
+      // Coba hapus Firestore (mungkin gagal karena rules)
       if (fb) {
         const { db, collection, getDocs, deleteDoc } = fb;
         for (const [key, colName] of Object.entries(FS_COLLECTIONS)) {
           if (!resetDataItems[key]) continue;
-          const snap = await getDocs(collection(db, colName));
-          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+          try {
+            const snap = await getDocs(collection(db, colName));
+            await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+          } catch { fsError = true; }
         }
-        // Hapus data utama di collection "sipamdal"
         const mainKeys = [];
         if (resetDataItems.patroli) mainKeys.push("pad_patrol");
         if (resetDataItems.insiden) mainKeys.push("pad_inc");
@@ -3242,22 +3243,27 @@ function AdminMemberTab({ patrols, standJaga, incidents, mutations }) {
         if (resetDataItems.libur) mainKeys.push("pad_libur");
         if (resetDataItems.inventaris) mainKeys.push("pad_inv_daftar","pad_inv_cek");
         for (const k of mainKeys) {
-          try { await fb.setDoc(fb.doc(db,"sipamdal",k),{items:[]}); } catch{}
+          try { await fb.setDoc(fb.doc(db,"sipamdal",k),{items:[]}); } catch{ fsError = true; }
         }
-        // Hapus semua pad_pos_* di Firestore
         if (resetDataItems.pos) {
-          const snap = await getDocs(collection(db, "sipamdal"));
-          await Promise.all(snap.docs.filter(d=>d.id.startsWith("pad_pos_")).map(d=>deleteDoc(d.ref)));
+          try {
+            const snap = await getDocs(collection(db, "sipamdal"));
+            await Promise.all(snap.docs.filter(d=>d.id.startsWith("pad_pos_")).map(d=>deleteDoc(d.ref)));
+          } catch { fsError = true; }
         }
       }
       setResetDataLoading(false);
       setResetDataOpen(false);
       setResetDataPin("");
-      alert("✅ Data berhasil dihapus! Silakan refresh halaman.");
+      if (fsError) {
+        alert("✅ Data lokal berhasil dihapus!\n\n⚠️ Sebagian data Firebase tidak dapat dihapus (izin terbatas). Data di perangkat ini sudah bersih. Refresh halaman untuk melanjutkan.");
+      } else {
+        alert("✅ Data berhasil dihapus! Silakan refresh halaman.");
+      }
       window.location.reload();
     } catch(e) {
       setResetDataLoading(false);
-      alert("❌ Gagal menghapus sebagian data: " + e.message);
+      alert("❌ Terjadi kesalahan: " + e.message);
     }
   };
 
@@ -4387,6 +4393,20 @@ const NAV_TABS_ADMIN = [
   {id:"incident",label:"Insiden",icon:"alert"},
   {id:"more",label:"Lainnya",icon:"menu"},
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RESET DATA LAMA — jalankan sekali saat versi baru pertama kali dibuka
+// ═══════════════════════════════════════════════════════════════════════════════
+const APP_VERSION = "v2.1-clean"; // ganti versi ini untuk trigger reset ulang
+(function clearOldData() {
+  if (localStorage.getItem("pad_app_version") === APP_VERSION) return;
+  const KEEP = ["pad_theme", "pad_pins", "pad_admin_pin", "pad_app_version"];
+  Object.keys(localStorage)
+    .filter(k => k.startsWith("pad_") && !KEEP.includes(k))
+    .forEach(k => localStorage.removeItem(k));
+  localStorage.setItem("pad_app_version", APP_VERSION);
+  console.log("✅ Data lama dibersihkan untuk versi", APP_VERSION);
+})();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // APP ROOT
