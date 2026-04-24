@@ -640,9 +640,12 @@ function useFS(key, init) {
 
       // JANGAN overwrite kalau:
       // 1. Data datang dari cache Firestore (offline), ATAU
-      // 2. Versi lokal lebih baru dari versi server
+      // 2. Versi lokal LEBIH BARU dari versi server (artinya ada data lokal yang belum tersync)
+      // CATATAN: gunakan strict less-than agar device lain tetap menerima update dari server
       if (fromCache) return;
       if (serverVer < localVer.current) return;
+      // Reset localVer agar sesuai dengan server (mencegah drift versi antar device)
+      localVer.current = serverVer;
 
       const data = snap.data().items ?? init;
       sv(data);
@@ -1834,7 +1837,6 @@ function PatrolTab({posAssign,patrols,setPatrols,toast,canEdit,isAdmin,currentUs
   return (
     <div>
       <PH title="Patroli" sub="Tap gedung untuk mencatat patroli"/>
-      {!canEdit&&<ReadOnlyBanner reguHari={getReguHari(new Date())}/>}
 
       {/* Grid lingkaran per pos */}
       {Object.entries(PATROL_AREAS).map(([pos,areas])=>{
@@ -4671,7 +4673,7 @@ function App() {
 
   const isAdmin = currentUser.isAdmin;
   // canEdit: admin selalu bisa, anggota hanya bisa jika regu-nya piket hari ini
-  const canEdit = isAdmin || currentUser.regu === reguHari;
+  const canEdit = true; // Semua pengguna bisa mencatat patroli (tidak terbatas regu piket)
   const ACTIVE_NAV = isAdmin ? NAV_TABS_ADMIN : NAV_TABS;
 
   const MORE_TABS = [
