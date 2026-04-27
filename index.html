@@ -616,6 +616,86 @@ function useFS(key, init) {
   return [v, set];
 }
 
+// ─── usePatrols: Sub-koleksi khusus patroli ───────────────────────────────────
+// Setiap patroli = 1 dokumen di sub-koleksi "sipamdal_patrol/{id}"
+// Foto (base64 besar) disimpan hanya di localStorage, Firestore hanya metadata
+// Solusi untuk batas 1MB Firestore per dokumen
+function usePatrols() {
+  const LS_KEY = "pad_patrol";
+  const LS_PHOTO_PREFIX = "pad_patrol_photo_";
+  const FS_COL = "sipamdal_patrol";
+
+  const [v, sv] = useState(() => {
+    try {
+      const s = localStorage.getItem(LS_KEY);
+      const items = s ? JSON.parse(s) : [];
+      // Restore foto dari localStorage per item
+      return items.map(p => {
+        if (!p.photo) {
+          try { p.photo = localStorage.getItem(LS_PHOTO_PREFIX + p.id) || null; } catch{}
+        }
+        return p;
+      });
+    } catch { return []; }
+  });
+
+  useEffect(() => {
+    const fb = window.__FB;
+    if (!fb) return;
+    const { db, collection, onSnapshot, query, orderBy } = fb;
+    const col = collection(db, FS_COL);
+    const q = query(col, orderBy("ts", "asc"));
+    const unsub = onSnapshot(q, snap => {
+      const items = snap.docs.map(d => {
+        const data = d.data();
+        // Ambil foto dari localStorage (tidak disimpan di Firestore)
+        let photo = null;
+        try { photo = localStorage.getItem(LS_PHOTO_PREFIX + data.id) || null; } catch{}
+        return { ...data, photo };
+      });
+      sv(items);
+      // Cache metadata (tanpa foto) ke localStorage
+      try { localStorage.setItem(LS_KEY, JSON.stringify(items.map(p => ({...p, photo: undefined})))); } catch{}
+    }, () => {});
+    return () => unsub();
+  }, []);
+
+  const set = (newArr) => {
+    // Deteksi item baru (yang belum ada di state sebelumnya)
+    sv(prev => {
+      const prevIds = new Set(prev.map(p => p.id));
+      const toAdd = newArr.filter(p => !prevIds.has(p.id));
+      const fb = window.__FB;
+      if (fb) {
+        const { db, collection, doc, setDoc } = fb;
+        toAdd.forEach(p => {
+          // Simpan foto ke localStorage saja
+          if (p.photo) {
+            try { localStorage.setItem(LS_PHOTO_PREFIX + p.id, p.photo); } catch{}
+          }
+          // Simpan metadata (tanpa foto) ke Firestore
+          const { photo: _ph, ...meta } = p;
+          setDoc(doc(collection(db, FS_COL), String(p.id)), meta).catch(err => {
+            console.error("Patrol save error:", err.code, err.message);
+          });
+        });
+      } else {
+        // Offline: simpan foto ke localStorage
+        toAdd.forEach(p => {
+          if (p.photo) {
+            try { localStorage.setItem(LS_PHOTO_PREFIX + p.id, p.photo); } catch{}
+          }
+        });
+      }
+      // Simpan metadata ke localStorage cache
+      try { localStorage.setItem(LS_KEY, JSON.stringify(newArr.map(p => ({...p, photo: undefined})))); } catch{}
+      return newArr;
+    });
+  };
+
+  return [v, set];
+}
+
 // Gunakan useFS untuk semua data kolaboratif
 const useData = useFS;
 
@@ -3311,7 +3391,15 @@ function AdminMemberTab({ patrols, standJaga, incidents, mutations }) {
           } catch { fsError = true; }
         }
         const mainKeys = [];
-        if (resetDataItems.patroli) mainKeys.push("pad_patrol");
+        // pad_patrol sekarang menggunakan sub-koleksi sipamdal_patrol (bukan sipamdal/pad_patrol)
+        if (resetDataItems.patroli) {
+          try {
+            const snap = await getDocs(collection(db, "sipamdal_patrol"));
+            await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+            // Hapus juga foto dari localStorage
+            Object.keys(localStorage).filter(k=>k.startsWith("pad_patrol_photo_")).forEach(k=>localStorage.removeItem(k));
+          } catch { fsError = true; }
+        }
         if (resetDataItems.insiden) mainKeys.push("pad_inc");
         if (resetDataItems.paket) mainKeys.push("pad_pkg");
         if (resetDataItems.tamu) mainKeys.push("pad_guest");
@@ -4572,7 +4660,7 @@ function App() {
   const [incidents, setIncidents] = useData("pad_inc", []);
   const [packages, setPackages] = useData("pad_pkg", []);
   const [guests, setGuests] = useData("pad_guest", []);
-  const [patrols, setPatrols] = useData("pad_patrol", []);
+  const [patrols, setPatrols] = usePatrols();
   const [mutations, setMutations] = useData("pad_mut", []);
   const [standJaga, setStandJaga] = useData("pad_stand", []);
   const [posRollingLog, setPosRollingLog] = useData("pad_posroll", []);
