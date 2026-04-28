@@ -1189,16 +1189,16 @@ function DashTab({now,shift,reguHari,posAssign,incidents,packages,guests,patrols
   const noMutasi = todayMut.length === 0;
 
   const alerts = [
-    ...(posKosong    ? [{icon:"🔴", msg:`POS BELUM TERISI: ${emptyPos.join(", ")}`, col:"#e53e3e", bg:"rgba(229,62,62,.1)", tab:"pos"}] : []),
-    ...(patrolOverdue? [{icon:"⚡", msg: todP===0 ? "Belum ada patroli hari ini" : `Patroli terakhir ${Math.floor(msSincePatrol/60000)} menit lalu — saatnya patroli!`, col:"#ff9900", bg:"rgba(255,153,0,.09)", tab:"patrol"}] : []),
-    ...(rollingOverdue&&canEdit? [{icon:"🔄", msg:`Sudah ${msSinceRolling===Infinity?"--":Math.floor(msSinceRolling/60000)} menit belum rolling pos`, col:"var(--accent)", bg:"rgba(91,155,213,.09)", tab:"pos"}] : []),
+    ...(posKosong    ? [{icon:"🔴", msg:`POS BELUM TERISI: ${emptyPos.join(", ")}`, col:"#e53e3e", bg:"rgba(229,62,62,.1)", tab: isAdmin ? null : "pos"}] : []),
+    ...(patrolOverdue? [{icon:"⚡", msg: todP===0 ? "Belum ada patroli hari ini" : `Patroli terakhir ${Math.floor(msSincePatrol/60000)} menit lalu — saatnya patroli!`, col:"#ff9900", bg:"rgba(255,153,0,.09)", tab: isAdmin ? null : "patrol"}] : []),
+    ...(rollingOverdue&&canEdit? [{icon:"🔄", msg:`Sudah ${msSinceRolling===Infinity?"--":Math.floor(msSinceRolling/60000)} menit belum rolling pos`, col:"var(--accent)", bg:"rgba(91,155,213,.09)", tab: isAdmin ? null : "pos"}] : []),
     ...(noMutasi     ? [{icon:"📋", msg:"Belum ada laporan serah terima shift hari ini", col:"var(--tx2)", bg:"var(--card)", tab:"mutation"}] : []),
   ];
 
   const cards=[
     {l:"Paket Menunggu",v:pending,col:"#ff9900",bg:"rgba(255,153,0,.07)",icon:"pkg",t:"package"},
     {l:"Tamu Menginap",v:staying,col:"#8b8bff",bg:"rgba(139,139,255,.08)",icon:"ppl",t:"guest"},
-    {l:"Patroli Hari Ini",v:todP,col:"var(--ok)",bg:"var(--green-card)",icon:"qr",t:"patrol"},
+    {l:"Patroli Hari Ini",v:todP,col:"var(--ok)",bg:"var(--green-card)",icon:"qr",t: isAdmin ? null : "patrol"},
     {l:"Insiden Aktif",v:actI,col:"#e53e3e",bg:"rgba(229,62,62,.09)",icon:"alert",t:"incident"},
   ];
   return (
@@ -1276,11 +1276,11 @@ function DashTab({now,shift,reguHari,posAssign,incidents,packages,guests,patrols
             const isWarn = a.col==="#ff9900";
             const iconClass = isCritical ? "icon-glow-red" : isWarn ? "icon-blink-orange" : "";
             return (
-            <div key={i} onClick={()=>setTab(a.tab)} className={isCritical?"alert-critical":""} style={{background:a.bg,border:`1.5px solid ${a.col}40`,borderLeft:`3px solid ${a.col}`,borderRadius:10,padding:"10px 14px",marginBottom:7,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+            <div key={i} onClick={()=>a.tab&&setTab(a.tab)} className={isCritical?"alert-critical":""} style={{background:a.bg,border:`1.5px solid ${a.col}40`,borderLeft:`3px solid ${a.col}`,borderRadius:10,padding:"10px 14px",marginBottom:7,display:"flex",alignItems:"center",gap:10,cursor:a.tab?"pointer":"default"}}>
               <span className={iconClass} style={{fontSize:18,flexShrink:0}}>{a.icon}</span>
               <div style={{flex:1}}>
                 <div style={{fontSize:12.5,fontWeight:800,color:a.col}}>{a.msg}</div>
-                <div style={{fontSize:10.5,color:"var(--tx2)"}}>Tap untuk buka →</div>
+                {a.tab&&<div style={{fontSize:10.5,color:"var(--tx2)"}}>Tap untuk buka →</div>}
               </div>
             </div>
             );
@@ -1310,7 +1310,7 @@ function DashTab({now,shift,reguHari,posAssign,incidents,packages,guests,patrols
           const isCritical = c.t==="incident" && c.v > 0;
           const isWarn = (c.t==="package"||c.t==="guest") && c.v > 0;
           return (
-          <div key={c.l} onClick={()=>setTab(c.t)} style={{background:"var(--card-solid)",border:`1.5px solid ${c.col}30`,borderRadius:12,padding:"14px 16px",cursor:"pointer",position:"relative",overflow:"hidden"}}>
+          <div key={c.l} onClick={()=>c.t&&setTab(c.t)} style={{background:"var(--card-solid)",border:`1.5px solid ${c.col}30`,borderRadius:12,padding:"14px 16px",cursor:c.t?"pointer":"default",position:"relative",overflow:"hidden"}}>
             <div style={{position:"absolute",top:0,right:0,width:60,height:60,background:c.col,opacity:.05,borderRadius:"0 12px 0 60px",pointerEvents:"none"}}/>
             <span className={isCritical?"icon-glow-red":isWarn?"icon-glow-orange":""}><IC n={c.icon} s={14} c={c.col}/></span>
             <div className={`stat-number${isCritical?" stat-critical":""}`} style={{color:c.col,marginTop:8}}>{c.v}</div>
@@ -2232,7 +2232,7 @@ function MutPrint({m, onClose, inventarisDaftar, inventarisCek}) {
   ];
   const STATUS_COLOR = {Lengkap:"var(--ok)", Kurang:"#ffcc00", Rusak:"#dc2626"};
   return (
-    <div style={{fontFamily:"serif",background:"#fff",padding:"20px 22px",maxWidth:500,margin:"0 auto",color:"#1a1a1a"}}>
+    <div id="mut-print-content" style={{fontFamily:"serif",background:"#fff",padding:"20px 22px",maxWidth:500,margin:"0 auto",color:"#1a1a1a"}}>
       {/* Kop Surat */}
       <div style={{textAlign:"center",borderBottom:"3px double #000",paddingBottom:10,marginBottom:14}}>
         <div style={{fontSize:10,fontWeight:400,letterSpacing:0.5}}>KEMENTERIAN DALAM NEGERI</div>
@@ -2380,7 +2380,24 @@ function MutPrint({m, onClose, inventarisDaftar, inventarisCek}) {
 
       {/* Tombol cetak */}
       <div style={{marginTop:18,display:"flex",gap:8,justifyContent:"center"}}>
-        <Btn onClick={()=>window.print()} color="var(--accent)" size="lg"><IC n="print" s={14}/> Cetak</Btn>
+        <Btn onClick={()=>{
+          const el = document.getElementById("mut-print-content");
+          if(!el) return;
+          const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Laporan Mutasi</title><style>
+            *{box-sizing:border-box;margin:0;padding:0}
+            body{font-family:serif;background:#fff;color:#1a1a1a;padding:16px}
+            table{width:100%;border-collapse:collapse}
+            th,td{border:1px solid #000;padding:3px 6px;font-size:11px}
+            th{background:#e8e8e8;font-weight:700}
+            @page{size:A4;margin:15mm}
+            @media print{body{padding:0}}
+          </style></head><body>${el.innerHTML}</body></html>`;
+          const w = window.open("","_blank","width=800,height=900");
+          w.document.write(html);
+          w.document.close();
+          w.focus();
+          setTimeout(()=>{w.print();},400);
+        }} color="var(--accent)" size="lg"><IC n="print" s={14}/> Cetak</Btn>
         <Btn onClick={onClose} color="var(--tx4)" variant="outline" size="lg">Tutup</Btn>
       </div>
     </div>
@@ -3131,7 +3148,7 @@ function LoginScreen({ onLogin, userPins }) {
 
       {step === "pin" && (
         <div style={{ width: "100%", maxWidth: 300, textAlign: "center", animation:"slideUp .35s ease" }}>
-          <button onClick={() => { setStep("select"); setErr(""); setPin(""); }} style={{ background: "none", border: "none", color: "var(--tx3)", fontSize: 12, cursor: "pointer", marginBottom: 20, fontFamily: "inherit" }}>← Kembali</button>
+          <button onClick={() => { setStep("select"); setErr(""); setPin(""); }} style={{ background: "none", border: "none", color: "transparent", fontSize: 12, cursor: "default", marginBottom: 20, fontFamily: "inherit", height: 0, padding: 0, overflow: "hidden" }}>← Kembali</button>
           <div style={{ width: 52, height: 52, borderRadius: 14, background: selected.isAdmin ? "var(--card2)" : `${reguColors[selected.regu]}40`, border: `2px solid ${selected.isAdmin ? "var(--border2)" : reguColors[selected.regu]}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 10px", animation:"avatarPop .4s cubic-bezier(.34,1.56,.64,1)" }}>
             <span style={{ fontSize: 22 }}>{selected.isAdmin ? "🔐" : "👤"}</span>
           </div>
@@ -3146,9 +3163,13 @@ function LoginScreen({ onLogin, userPins }) {
           </div>
           {err && <div style={{ fontSize: 12, color: "#ff3333", marginBottom: 12, animation: shake ? "shake .4s" : "fadeIn .3s" }}>{err}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 20 }}>
-            {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d, i) => (
-              <button key={i} onClick={() => d === "⌫" ? handleDel() : d !== "" ? handlePinInput(String(d)) : null}
-                style={{ background: pressedKey === String(d) ? "var(--card2)" : d === "⌫" ? "rgba(239,68,68,.15)" : d === "" ? "transparent" : "var(--card2)", border: `1.5px solid ${d === "" ? "transparent" : d === "⌫" ? "rgba(239,68,68,.4)" : "var(--border2)"}`, borderRadius: 12, height: 56, fontSize: d === "⌫" ? 18 : 22, fontWeight: 700, color: d === "⌫" ? "var(--r)" : "var(--tx)", cursor: d === "" ? "default" : "pointer", fontFamily: "inherit", transition: "all .12s", transform: pressedKey === String(d) ? "scale(.92)" : "scale(1)" }}>
+            {[1,2,3,4,5,6,7,8,9,"↩",0,"⌫"].map((d, i) => (
+              <button key={i} onClick={() =>
+                d === "⌫" ? handleDel()
+                : d === "↩" ? (setStep("select"), setErr(""), setPin(""))
+                : handlePinInput(String(d))
+              }
+                style={{ background: pressedKey === String(d) ? "var(--card2)" : d === "⌫" ? "rgba(239,68,68,.15)" : d === "↩" ? "rgba(100,100,200,.12)" : "var(--card2)", border: `1.5px solid ${d === "↩" ? "rgba(100,100,200,.4)" : d === "⌫" ? "rgba(239,68,68,.4)" : "var(--border2)"}`, borderRadius: 12, height: 56, fontSize: d === "⌫" || d === "↩" ? 18 : 22, fontWeight: 700, color: d === "⌫" ? "var(--r)" : d === "↩" ? "var(--tx3)" : "var(--tx)", cursor: "pointer", fontFamily: "inherit", transition: "all .12s", transform: pressedKey === String(d) ? "scale(.92)" : "scale(1)" }}>
                 {d}
               </button>
             ))}
