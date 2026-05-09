@@ -4560,8 +4560,18 @@ React.createElement("div", { style: { marginTop: 14 } },
 React.createElement(Btn, { onClick: () => { setOpen(false); setSelectedRegu(null); }, color: "var(--accent)", size: "lg", full: true }, "Tutup")))));
 }
 function LoginScreen({ onLogin, userPins }) {
-const [step, setStep] = useState("select");
-const [selected, setSelected] = useState(null);
+const savedUser = (() => { try { return JSON.parse(localStorage.getItem("pad_user")); } catch(e) { return null; } })();
+const reguHariNow = getReguHari(new Date());
+const getUserStatus = (u) => {
+if (!u || u.isAdmin) return null;
+if (u.regu === reguHariNow) return "PIKET";
+const yd = new Date(); yd.setDate(yd.getDate()-1);
+if (u.regu === getReguHari(yd)) return "LEPAS";
+return "LIBUR";
+};
+const savedStatus = savedUser && !savedUser.isAdmin ? getUserStatus(savedUser) : null;
+const [step, setStep] = useState(savedUser && !savedUser.isAdmin ? "saved" : "select");
+const [selected, setSelected] = useState(savedUser && !savedUser.isAdmin ? savedUser : null);
 const [pin, setPin] = useState("");
 const [err, setErr] = useState("");
 const [shake, setShake] = useState(false);
@@ -4617,6 +4627,31 @@ const orbBlur = isLight ? "40px" : "28px";
 return (React.createElement("div", { style: { minHeight: "100vh", background: "var(--dk)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "20px 16px", position: "relative", overflow: "hidden" } },
 React.createElement("div", { style: { position: "absolute", inset: 0, background: isLight ? "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,.06) 0%, transparent 70%)" : "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,.10) 0%, transparent 70%)", pointerEvents: "none" } }),
 React.createElement("div", { style: { textAlign: "center", marginBottom: 24, opacity: mounted ? 1 : 0, transform: mounted ? "translateY(0)" : "translateY(-28px)", transition: "opacity .6s ease, transform .6s ease" } }),
+step === "saved" && (React.createElement("div", { style: { width: "100%", maxWidth: 390, opacity: mounted ? 1 : 0, transform: mounted ? "translateY(0)" : "translateY(24px)", transition: "opacity .5s ease .2s, transform .5s ease .2s" } },
+React.createElement("div", { style: { background: "var(--card-solid)", border: "1px solid var(--border2)", borderRadius: 20, padding: "24px 16px 20px", boxShadow: "0 4px 24px rgba(0,0,0,.25)", textAlign: "center" } },
+React.createElement("div", { style: { fontSize: 36, marginBottom: 8 } }, "👋"),
+React.createElement("div", { style: { fontSize: 18, fontWeight: 900, color: "var(--tx)", marginBottom: 4 } }, "Halo, " + (savedUser ? savedUser.name : "") + "!"),
+React.createElement("div", { style: { fontSize: 12, color: "var(--tx3)", marginBottom: 20 } }, "Regu " + (savedUser ? savedUser.regu : "")),
+React.createElement("div", { style: {
+display: "inline-block",
+padding: "8px 20px",
+borderRadius: 20,
+fontWeight: 800,
+fontSize: 13,
+marginBottom: 24,
+background: savedStatus === "PIKET" ? "rgba(0,200,150,.15)" : savedStatus === "LEPAS" ? "rgba(245,158,11,.15)" : "rgba(107,114,128,.15)",
+color: savedStatus === "PIKET" ? "var(--accent)" : savedStatus === "LEPAS" ? "#f59e0b" : "#9ca3af",
+border: savedStatus === "PIKET" ? "1px solid var(--accent)" : savedStatus === "LEPAS" ? "1px solid #f59e0b" : "1px solid #6b7280",
+} },
+savedStatus === "PIKET" ? "🟢 Regu kamu sedang PIKET hari ini" :
+savedStatus === "LEPAS" ? "🟡 Regu kamu baru selesai tugas" :
+"⚫ Kamu sedang LIBUR hari ini"),
+savedStatus !== "PIKET" && React.createElement("div", { style: { fontSize: 12, color: "var(--tx3)", marginBottom: 20, padding: "10px 14px", background: "var(--card2)", borderRadius: 10 } },
+savedStatus === "LEPAS" ? "Akses terbatas — bisa lihat data tapi tidak bisa input." : "Akses read-only — kamu bisa cek laporan & jadwal."),
+React.createElement("button", { onClick: () => { onLogin(savedUser); }, style: { width: "100%", background: "var(--accent)", border: "none", borderRadius: 12, padding: "13px 24px", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 } },
+savedStatus === "PIKET" ? "🚀 Masuk" : "👁️ Masuk (Read Only)"),
+React.createElement("button", { onClick: () => { setStep("select"); setSelected(null); }, style: { width: "100%", background: "transparent", border: "1px solid var(--border2)", borderRadius: 12, padding: "11px 24px", color: "var(--tx3)", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
+"Masuk sebagai orang lain")))),
 step === "select" && (React.createElement("div", { style: { width: "100%", maxWidth: 390, opacity: mounted ? 1 : 0, transform: mounted ? "translateY(0)" : "translateY(24px)", transition: "opacity .5s ease .2s, transform .5s ease .2s" } },
 React.createElement("div", { style: {
 background: "var(--card-solid)",
