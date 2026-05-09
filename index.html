@@ -1193,11 +1193,18 @@ const REGU = {
  3: ["Tatang", "Isnanta", "Iwan 92", "Dudi", "Rukman"],
 };
 const JADWAL_START = new Date("2025-04-14T07:00:00");
+function toLocalKey(date) {
+ const d = date || new Date();
+ const y = d.getFullYear();
+ const m = String(d.getMonth()+1).padStart(2,"0");
+ const dd = String(d.getDate()).padStart(2,"0");
+ return `${y}-${m}-${dd}`;
+}
 function getReguHari(date) {
- const OFFSET = 7 * 3600000;
- const d = new Date(new Date(date).getTime() - OFFSET); d.setHours(0,0,0,0);
- const s = new Date(new Date(JADWAL_START).getTime() - OFFSET); s.setHours(0,0,0,0);
- const diff = Math.round((d - s) / 86400000);
+ const d = new Date(date);
+ const localD = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+ const localS = new Date(JADWAL_START.getFullYear(), JADWAL_START.getMonth(), JADWAL_START.getDate());
+ const diff = Math.round((localD - localS) / 86400000);
  const urut = [3, 1, 2];
  return urut[((diff % 3) + 3) % 3];
 }
@@ -1211,7 +1218,6 @@ const PATROL_AREAS = {
  "Pos Guest House": ["Guest House 1","Guest House 2","Guest House 3","Guest House 4","Guest House 5","Gedung GOR","Gedung Arsip"],
 };
 const QR_PREFIX = "BBPKA2-PAMDAL-";
-const encQR = (a) => QR_PREFIX + a.replace(/ /g,"_");
 const decQR = (v) => v && v.startsWith(QR_PREFIX) ? v.replace(QR_PREFIX,"").replace(/_/g," ") : null;
 const ALL_AREAS = Object.values(PATROL_AREAS).flat();
 const ROLLING_TIMES = ["06:00","12:00","18:00","00:00","03:00"];
@@ -1229,7 +1235,7 @@ const HARI_MERAH = new Set([
 function isHariLibur(date) {
  const d = new Date(date);
  const dow = d.getDay(); // 0=Sun 6=Sat
- const key = d.toISOString().slice(0,10);
+ const key = toLocalKey(d);
  return dow === 0 || dow === 6 || HARI_MERAH.has(key);
 }
 const INC_CAT = ["Rendah","Sedang","Penting"];
@@ -2330,7 +2336,7 @@ function DashTab({now,shift,reguHari,posAssign,incidents,packages,guests,patrols
  </div>
  )}
  {(()=>{
- const todayKey = now.toISOString().slice(0,10);
+ const todayKey = toLocalKey(now);
  const liburHariIni = liburData?.[todayKey] || [];
  if(!isHariLibur(now) && liburHariIni.length===0) return null;
  const jenis = HARI_MERAH.has(todayKey)?"📅 Libur Nasional / Hari Merah":now.getDay()===0?"📅 Hari Minggu":"📅 Hari Sabtu";
@@ -2467,21 +2473,98 @@ function DashTab({now,shift,reguHari,posAssign,incidents,packages,guests,patrols
  </div>
  );
 }
-function JadwalTab({now,liburData,isAdmin,setTab}) {
+function JadwalTab({now,liburData,setLiburData,reguHari,isAdmin,canEdit,toast,setTab}) {
  const days=[]; for(let i=-1;i<=13;i++){const d=new Date(now);d.setDate(d.getDate()+i);days.push(d);}
  const RC={1:"var(--accent)",2:"var(--ok)",3:"#a78bfa"};
  const RB={1:"var(--pill-active)",2:"var(--green-card)",3:"rgba(167,139,250,.1)"};
  const rToday=getReguHari(now);
+ const todayKey=toLocalKey(now);
+ const liburHariIni=liburData?.[todayKey]||[];
+ const isLiburToday=isHariLibur(now);
+ const jenisLibur=HARI_MERAH.has(todayKey)?"Libur Nasional":now.getDay()===0?"Hari Minggu":"Hari Sabtu";
+ const [liburModalOpen,setLiburModalOpen]=React.useState(false);
+ const toggleLibur=(nama)=>{
+  if(!isAdmin){toast&&toast("Hanya admin yang bisa menetapkan libur",false);return;}
+  const cur=liburData?.[todayKey]||[];
+  if(!cur.includes(nama)&&cur.length>=2){toast&&toast("Maksimal 2 anggota libur per hari",false);return;}
+  const next=cur.includes(nama)?cur.filter(x=>x!==nama):[...cur,nama];
+  setLiburData&&setLiburData({...(liburData||{}),[todayKey]:next});
+ };
+ const REGU_COLS={1:"var(--accent)",2:"var(--ok)",3:"#a78bfa"};
  return (
  <div>
  <PH title="Jadwal Piket Otomatis" sub="14 Apr=Regu 2 · 15 Apr=Regu 3 · berputar"/>
- <div style={{background:`linear-gradient(135deg,${RC[rToday]},${RC[rToday]}cc)`,borderRadius:14,padding:"16px 18px",marginBottom:14,color:"#fff"}}>
- <div style={{fontSize:11,opacity:.75}}>HARI INI — {fmtDate(now)}</div>
- <div style={{fontSize:26,fontWeight:900,marginTop:2}}>REGU {rToday}</div>
- <div style={{marginTop:7,display:"flex",flexWrap:"wrap",gap:6}}>
- {REGU[rToday].map(m=><span key={m} style={{background:"rgba(255,255,255,.23)",borderRadius:7,padding:"3px 10px",fontSize:12,fontWeight:700}}>{m}</span>)}
+
+ {/* === KARTU GABUNGAN: REGU HARI INI + LIBUR === */}
+ <div style={{background:`linear-gradient(135deg,${RC[rToday]},${RC[rToday]}cc)`,borderRadius:14,marginBottom:14,color:"#fff",overflow:"hidden"}}>
+  {/* Bagian atas: info regu */}
+  <div style={{padding:"16px 18px 14px"}}>
+   <div style={{fontSize:11,opacity:.75}}>HARI INI — {fmtDate(now)}</div>
+   <div style={{fontSize:26,fontWeight:900,marginTop:2}}>REGU {rToday}</div>
+   <div style={{marginTop:7,display:"flex",flexWrap:"wrap",gap:6}}>
+    {REGU[rToday].map(m=>{
+     const isLibur=liburHariIni.includes(m);
+     return (
+      <span key={m} style={{
+       background:isLibur?"rgba(255,204,0,.30)":"rgba(255,255,255,.23)",
+       borderRadius:7,padding:"3px 10px",fontSize:12,fontWeight:700,
+       border:isLibur?"1.5px solid rgba(255,204,0,.70)":"1.5px solid transparent",
+       color:isLibur?"#ffe066":"#fff",
+       display:"inline-flex",alignItems:"center",gap:4,
+       textDecoration:isLibur?"line-through":"none",
+       opacity:isLibur?0.85:1,
+      }}>{isLibur&&<span style={{fontSize:11}}>🌴</span>}{m}</span>
+     );
+    })}
+   </div>
+  </div>
+  {/* Divider */}
+  <div style={{height:1,background:"rgba(255,255,255,.18)",margin:"0 0"}}/>
+  {/* Bagian bawah: libur */}
+  <div
+   onClick={()=>{ if(isAdmin) setLiburModalOpen(true); }}
+   style={{padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:isAdmin?"pointer":"default",background:"rgba(0,0,0,.15)"}}
+  >
+   <div style={{display:"flex",alignItems:"center",gap:9}}>
+    <span style={{fontSize:18}}>🌴</span>
+    <div>
+     <div style={{fontSize:11,fontWeight:800,opacity:.9}}>
+      {isLiburToday ? jenisLibur : "Jatah Libur Hari Ini"}
+     </div>
+     {liburHariIni.length>0
+      ? <div style={{fontSize:10.5,opacity:.85,marginTop:1}}>Libur: {liburHariIni.join(", ")}</div>
+      : <div style={{fontSize:10.5,opacity:.7,marginTop:1}}>{isAdmin?"Tap untuk tetapkan anggota libur":"Belum ada anggota libur"}</div>
+     }
+    </div>
+   </div>
+   <div style={{display:"flex",alignItems:"center",gap:6}}>
+    {liburHariIni.length>0&&<span style={{background:"rgba(255,255,255,.25)",borderRadius:20,padding:"2px 9px",fontSize:11,fontWeight:800}}>{liburHariIni.length}/2</span>}
+    {isAdmin&&<span style={{fontSize:13,opacity:.7}}>›</span>}
+   </div>
+  </div>
  </div>
- </div>
+
+ {/* Modal libur */}
+ <Modal open={liburModalOpen} onClose={()=>setLiburModalOpen(false)} title={"🌴 Jatah Libur — "+now.toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"})}>
+  <div style={{fontSize:12,color:"var(--tx3)",marginBottom:12}}>
+   Tap anggota <b>Regu {reguHari||rToday}</b> untuk toggle libur tambahan.
+   <span style={{marginLeft:8,fontWeight:700,color:liburHariIni.length>=2?"var(--r)":"var(--ok)"}}>[{liburHariIni.length}/2 slot]</span>
+  </div>
+  <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+   {(REGU[reguHari||rToday]||[]).map(nm=>{
+    const isL=liburHariIni.includes(nm);
+    const col=REGU_COLS[reguHari||rToday]||"var(--accent)";
+    return(
+     <button key={nm} onClick={()=>toggleLibur(nm)} style={{padding:"10px 16px",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",background:isL?"rgba(255,204,0,.15)":"var(--card-solid)",border:`2px solid ${isL?"#ffcc00":col+"40"}`,color:isL?"#ffcc00":col,display:"flex",alignItems:"center",gap:7,flex:"1 1 calc(50% - 8px)",justifyContent:"center",transition:"all .15s"}}>
+      <span style={{fontSize:16}}>{isL?"🌴":"○"}</span>{nm}
+     </button>
+    );
+   })}
+  </div>
+  {liburHariIni.length>0&&<div style={{background:"rgba(255,204,0,.1)",border:"1px solid #fbbf24",borderRadius:9,padding:"9px 13px",marginBottom:14,fontSize:11.5,color:"#ffcc00"}}><b>Ditetapkan libur:</b> {liburHariIni.join(", ")}</div>}
+  <Btn onClick={()=>setLiburModalOpen(false)} color="var(--accent)" size="lg" full>Tutup</Btn>
+ </Modal>
+
  <div style={{display:"flex",gap:8,marginBottom:12}}>
  {[1,2,3].map(r=>(
  <div key={r} style={{background:RB[r],border:`1.5px solid ${RC[r]}30`,borderRadius:9,padding:"6px 10px",flex:1}}>
@@ -2490,33 +2573,7 @@ function JadwalTab({now,liburData,isAdmin,setTab}) {
  </div>
  ))}
  </div>
- <div style={{background:"var(--card-solid)",border:"1px solid var(--border)",borderRadius:12,overflow:"hidden"}}>
- <div style={{display:"grid",gridTemplateColumns:"1fr 70px 1.5fr",background:"var(--accent)",padding:"8px 12px"}}>
- {["Tanggal","Regu","Anggota"].map(h=><div key={h} style={{fontSize:10,fontWeight:800,color:"#fff",textTransform:"uppercase"}}>{h}</div>)}
- </div>
- {days.map((d,i)=>{
- const r=getReguHari(d);
- const isT=d.toDateString()===now.toDateString();
- const libur=isHariLibur(d);
- const dKey=d.toISOString().slice(0,10);
- const liburTambahan=(liburData&&liburData[dKey])||[];
- return (
- <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 70px 1.5fr",padding:"8px 12px",borderBottom:"1px solid var(--border)",background:libur?"rgba(255,200,0,.12)":isT?RB[r]:i%2===0?"var(--card-solid)":"var(--card-solid)",alignItems:"center"}}>
- <div>
- <div style={{fontSize:12,fontWeight:isT?800:600,color:libur?"#ffcc00":isT?RC[r]:"var(--tx)"}}>
- {d.toLocaleDateString("id-ID",{day:"numeric",month:"short"})}
- {isT&&<span style={{marginLeft:5,fontSize:9,background:RC[r],color:"#fff",borderRadius:4,padding:"1px 5px"}}>HARI INI</span>}
- {libur&&<span style={{marginLeft:5,fontSize:9,background:"var(--y)",color:"#0f1e16",borderRadius:4,padding:"1px 5px"}}>LIBUR</span>}
- </div>
- <div style={{fontSize:10,color:libur?"var(--tx3)":"var(--tx3)"}}>{d.toLocaleDateString("id-ID",{weekday:"long"})}</div>
- {liburTambahan.length>0&&<div style={{fontSize:9,color:"#ffcc00",marginTop:1}}>🏖 Libur: {liburTambahan.join(", ")}</div>}
- </div>
- <Bdg text={`Regu ${r}`} color={libur?"#ffcc00":RC[r]}/>
- <div style={{fontSize:11,color:"var(--tx)"}}>{REGU[r].join(", ")}</div>
- </div>
- );
- })}
- </div>
+
  </div>
  );
 }
@@ -4334,7 +4391,7 @@ function MutTab({mutations,setMutations,reguHari,toast,canEdit,patrols=[],incide
  );
 }
 function AbsenTab({absen,setAbsen,liburData,setLiburData,reguHari,toast,canEdit,isAdmin,now,setMutations}) {
- const todayKey = now.toISOString().slice(0,10);
+ const todayKey = toLocalKey(now);
  const todayLabel = now.toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
  const members = REGU[reguHari]||[];
  const [viewDate,setViewDate] = useState(todayKey);
@@ -4345,7 +4402,7 @@ function AbsenTab({absen,setAbsen,liburData,setLiburData,reguHari,toast,canEdit,
  if(!canEdit&&!isAdmin){toast("Tidak bisa edit",false);return;}
  const updated={...absen,[viewDate]:{...todayAbsen,[nama]:{status,ket,ts:Date.now()}}};
  setAbsen(updated); toast(`${nama}: ${status}`);
- if(setMutations && viewDate === now.toISOString().slice(0,10)){
+ if(setMutations && viewDate === toLocalKey(now)){
  const waktu = new Date().toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
  const sysEntry = {
  content: `[SYSTEM] - ABSENSI ${status.toUpperCase()} - ${waktu}`,
@@ -4370,7 +4427,7 @@ function AbsenTab({absen,setAbsen,liburData,setLiburData,reguHari,toast,canEdit,
  const allDays=Object.keys(absen).sort();
  const allMembers=Object.values(REGU).flat();
  const navDays=[];
- for(let i=6;i>=0;i--){const d=new Date(now);d.setDate(d.getDate()-i);navDays.push(d.toISOString().slice(0,10));}
+ for(let i=6;i>=0;i--){const d=new Date(now);d.setDate(d.getDate()-i);navDays.push(toLocalKey(d));}
  const liburTambahanHari=liburData[viewDate]||[];
  const reguViewDate = getReguHari(new Date(viewDate));
  const membersView = REGU[reguViewDate]||[];
@@ -4752,7 +4809,7 @@ function LiburBanner({jenis, liburHariIni, todayKey, liburData, setLiburData, is
  </div>
  )}
  </div>
- <Modal open={open} onClose={()=>{setOpen(false);setSelectedRegu(null);}} title={"🌴 Jatah Libur — " + new Date(todayKey).toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"})}>
+ <Modal open={open} onClose={()=>{setOpen(false);setSelectedRegu(null);}} title={"🌴 Jatah Libur — " + (()=>{const [y,m,d]=todayKey.split("-").map(Number);return new Date(y,m-1,d).toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"});})()}>
  {isAdmin ? (
  <>
  <div style={{fontSize:12,color:"var(--tx3)",marginBottom:12}}>
@@ -4875,12 +4932,6 @@ function LoginScreen({ onLogin, userPins }) {
  <div style={{ position:"absolute", inset:0, background: isLight ? "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,.06) 0%, transparent 70%)" : "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,.10) 0%, transparent 70%)", pointerEvents:"none" }} />
  <div style={{ textAlign: "center", marginBottom: 24, opacity: mounted?1:0, transform: mounted?"translateY(0)":"translateY(-28px)", transition:"opacity .6s ease, transform .6s ease" }}>
 
- {/* Hexagon logo wrapper - hidden */}
- <div style={{ display:"none" }}>
-   <div style={{ width: 68, height: 68, borderRadius: 16, overflow: "hidden", position:"relative", zIndex:1 }}>
- <img src="data:image/jpeg;base64,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" alt="BBPKA II Jatinangor" style={{ width: "100%", height: "100%", objectFit: "cover" }}/>
- </div>
- </div>{/* close hex wrapper */}
  </div>
  {step === "select" && (
  <div style={{ width: "100%", maxWidth: 390, opacity: mounted?1:0, transform: mounted?"translateY(0)":"translateY(24px)", transition:"opacity .5s ease .2s, transform .5s ease .2s" }}>
@@ -5570,426 +5621,299 @@ function InstruksiTab({instruksi, setInstruksi, toast, isAdmin, currentUser}) {
  );
 }
 function PimpinanTab({now,patrols,incidents,posAssign,instruksi,setInstruksi,mutations,currentUser,packages,guests,reguHari,liburData,setLiburData,setTab,canEdit,isAdmin,statusPimpinan={hadir:true},setStatusPimpinan,toast,broadcast,setBroadcast}) {
- const days7 = Array.from({length:7},(_,i)=>{
- const d=new Date(now); d.setDate(d.getDate()-i); return d;
- }).reverse();
- const patrolPerDay = days7.map(d=>{
- const count = patrols.filter(p=>new Date(p.ts).toDateString()===d.toDateString()).length;
- return {label:["Min","Sen","Sel","Rab","Kam","Jum","Sab"][d.getDay()], count, date:d.toISOString().slice(0,10)};
- });
- const todP = patrolPerDay[6].count;
- const kepatuhan = Math.min(100,Math.round((todP/10)*100));
- const actI = incidents.filter(i=>i.status!=="Selesai").length;
- const doneI = incidents.filter(i=>i.status==="Selesai").length;
+ const [heroCard, setHeroCard] = React.useState("alert");
+ const [bcText, setBcText] = React.useState("");
+ const [instrJudul, setInstrJudul] = React.useState("");
+ const [instrIsi, setInstrIsi] = React.useState("");
+ const [instrPrio, setInstrPrio] = React.useState("Normal");
+ const [instrTgt, setInstrTgt] = React.useState("Semua");
+ const todayKey = toLocalKey(now);
+
+ // --- computed values ---
  const emptyPos = POS_LIST.filter(p=>!(posAssign[p]?.length));
  const filledPos = POS_LIST.filter(p=>posAssign[p]?.length>0);
- const myRegu = currentUser?.regu;
- const visibel = (instruksi||[]).filter(i=>i.aktif&&(i.targetRegu==="Semua"||String(i.targetRegu)===String(myRegu)));
+ const actI = incidents.filter(i=>i.status!=="Selesai").length;
+ const doneI = incidents.filter(i=>i.status==="Selesai").length;
+ const todP = patrols.filter(p=>new Date(p.ts).toDateString()===now.toDateString()).length;
+ const lastPatrol = patrols.filter(p=>new Date(p.ts).toDateString()===now.toDateString()).sort((a,b)=>b.ts-a.ts)[0];
+ const msSince = lastPatrol ? now - lastPatrol.ts : Infinity;
+ const patrolOverdue = msSince > 3600000;
+ const kepatuhan = Math.min(100,Math.round((todP/10)*100));
+ const pendingPkg = (packages||[]).filter(p=>p.status==="Belum Diambil").length;
+ const stayingGuest = (guests||[]).filter(g=>g.status==="Masih Ada").length;
+ const visibel = (instruksi||[]).filter(i=>i.aktif&&(i.targetRegu==="Semua"||String(i.targetRegu)===String(currentUser?.regu)));
+ const hasBc = broadcast && broadcast.aktif;
  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay());
  const weekPatrols = patrols.filter(p=>new Date(p.ts)>=startOfWeek).length;
  const weekIncidents = incidents.filter(i=>new Date(i.ts||i.createdAt||0)>=startOfWeek).length;
  const weekMutations = mutations.filter(m=>new Date(m.ts)>=startOfWeek).length;
- const barMax = Math.max(...patrolPerDay.map(d=>d.count),1);
- const systemStatus =
- emptyPos.length>1?{text:"KRITIS",color:"#dc2626",bg:"rgba(255,50,50,.1)"}:
- emptyPos.length===1?{text:"PERLU PERHATIAN",color:"#ffcc00",bg:"rgba(255,204,0,.07)"}:
- {text:"NORMAL",color:"var(--ok)",bg:"var(--green-card)"};
- return (
- <div style={{paddingBottom:8}}>
- {(() => {
- const _iL = typeof document!=="undefined"&&document.documentElement.classList.contains("light");
- const admHeroBg = emptyPos.length>1
-  ? (_iL ? "linear-gradient(135deg,#fff5f5,#ffe8e8)" : "linear-gradient(135deg,#7a1010,#dc2626)")
-  : emptyPos.length===1
-  ? (_iL ? "linear-gradient(135deg,#fffbf0,#fff3cc)" : "linear-gradient(135deg,#5a4a00,#c49a3c)")
-  : (_iL ? "linear-gradient(135deg,#f0fff8,#e0f7ef)" : "linear-gradient(135deg,var(--qr-border),#00cc66)");
- const admHeroColor = _iL
-  ? (emptyPos.length>1?"#b91c1c":emptyPos.length===1?"#92400e":"#065f46")
-  : "#fff";
- const admHeroBorder = _iL
-  ? (emptyPos.length>1?"1.5px solid rgba(220,38,38,.25)":emptyPos.length===1?"1.5px solid rgba(180,130,0,.25)":"1.5px solid rgba(0,150,80,.20)")
-  : "none";
- return (
- <div style={{background:admHeroBg,border:admHeroBorder,borderRadius:16,padding:"18px 20px",marginBottom:14,color:admHeroColor,position:"relative",overflow:"hidden"}}>
- {/* Left accent strip */}
- <div style={{position:"absolute",top:0,left:0,width:4,height:"100%",background:emptyPos.length>1?"linear-gradient(180deg,#dc2626,#ff6b6b)":emptyPos.length===1?"linear-gradient(180deg,#d97706,#fbbf24)":"linear-gradient(180deg,#059669,#34d399)",borderRadius:"16px 0 0 16px",pointerEvents:"none"}}/>
- <div style={{fontSize:10,opacity:.65,letterSpacing:.5}}>BBPKA II Jatinangor · {now.toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
- <div style={{marginTop:10,display:"flex",alignItems:"center",gap:10}}>
- <div style={{background:systemStatus.bg,borderRadius:8,padding:"5px 12px"}}>
- <span style={{fontSize:13,fontWeight:900,color:systemStatus.color}}>● {systemStatus.text}</span>
- </div>
- <div style={{fontSize:11,opacity:.75}}>
- {emptyPos.length===0?"Seluruh pos terisi":"Pos kosong: "+emptyPos.join(", ")}
- </div>
- </div>
- </div>
- );
- })()}
- {(() => {
- const pending = (packages||[]).filter(p=>p.status==="Belum Diambil").length;
- const staying = (guests||[]).filter(g=>g.status==="Masih Ada").length;
- const todP2 = patrols.filter(p=>new Date(p.ts).toDateString()===now.toDateString()).length;
- const lastPatrol2 = patrols.filter(p=>new Date(p.ts).toDateString()===now.toDateString()).sort((a,b)=>b.ts-a.ts)[0];
- const msSincePatrol2 = lastPatrol2 ? now - lastPatrol2.ts : Infinity;
- const patrolOverdue2 = msSincePatrol2 > 3600000;
- const alrt = [
- ...(emptyPos.length>0?[{icon:"🔴",msg:`Pos kosong: ${emptyPos.join(", ")}`,col:"#e53e3e",bg:"rgba(229,62,62,.1)"}]:[]),
- ...(patrolOverdue2?[{icon:"⚡",msg:todP2===0?"Belum ada patroli hari ini":`Patroli terakhir ${Math.floor(msSincePatrol2/60000)} mnt lalu`,col:"#ff9900",bg:"rgba(255,153,0,.09)"}]:[]),
- ];
- return alrt.length>0 ? <SlidingAlertCapsule alerts={alrt} setTab={setTab} /> : null;
- })()}
- {reguHari&&(
- <div style={{background:"var(--admin-card-bg)",border:"1.5px solid var(--border)",borderRadius:12,padding:"14px 16px",marginBottom:14}}>
- <div style={{fontSize:9,letterSpacing:3,color:"var(--accent)",marginBottom:3}}>JADWAL JAGA HARI INI</div>
- <div style={{fontSize:20,fontWeight:900,color:"var(--accent-light)",letterSpacing:1}}>{["Min","Sen","Sel","Rab","Kam","Jum","Sab"][now.getDay()].toUpperCase()} — REGU {reguHari}</div>
- <div style={{fontSize:10,color:"var(--accent)",marginTop:3}}>{REGU[reguHari]?.join(" · ")}</div>
- </div>
- )}
- {(()=>{
- const todayKey = now.toISOString().slice(0,10);
  const liburHariIni = liburData?.[todayKey] || [];
- const jenis = HARI_MERAH.has(todayKey)?"📅 Libur Nasional / Hari Merah":now.getDay()===0?"📅 Hari Minggu":"📅 Hari Sabtu";
- return (
- <LiburBanner
- jenis={jenis}
- liburHariIni={liburHariIni}
- todayKey={todayKey}
- liburData={liburData}
- setLiburData={setLiburData}
- isAdmin={isAdmin}
- reguHari={reguHari}
- />
- );
- })()}
- {isAdmin && setBroadcast && (() => {
- const [bcText, setBcText] = React.useState("");
- const hasBc = broadcast && broadcast.aktif;
- const sendBc = () => {
- if(!bcText.trim()){toast("Ketik pesan terlebih dahulu!",false);return;}
- setBroadcast({
- aktif: true,
- pesan: bcText.trim(),
- pengirim: currentUser?.name || "Pimpinan",
- ts: Date.now(),
- });
- setBcText("");
- toast("✓ Pesan terkirim ke dashboard anggota!");
+ const isLibur = HARI_MERAH.has(todayKey)||now.getDay()===0||now.getDay()===6;
+ const systemStatus = emptyPos.length>1?"KRITIS":emptyPos.length===1?"PERHATIAN":"NORMAL";
+ const statusColor = emptyPos.length>1?"#dc2626":emptyPos.length===1?"#f59e0b":"#10b981";
+
+ const days7 = Array.from({length:7},(_,i)=>{const d=new Date(now);d.setDate(d.getDate()-i);return d;}).reverse();
+ const patrolPerDay = days7.map(d=>({label:["Min","Sen","Sel","Rab","Kam","Jum","Sab"][d.getDay()],count:patrols.filter(p=>new Date(p.ts).toDateString()===d.toDateString()).length,date:toLocalKey(d)}));
+ const barMax = Math.max(...patrolPerDay.map(d=>d.count),1);
+
+ // --- Hero Card content per section ---
+ const CARDS = {
+  alert: () => (
+   <div>
+    <div style={{marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
+     <span style={{fontSize:13,fontWeight:900,color:statusColor,background:statusColor+"22",borderRadius:7,padding:"4px 12px"}}>● {systemStatus}</span>
+    </div>
+    {POS_LIST.map(p=>{
+     const filled=posAssign[p]?.length>0;
+     return (
+      <div key={p} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+       <div>
+        <div style={{fontSize:13,fontWeight:700,color:"var(--tx2)"}}>{p}</div>
+        {filled&&<div style={{fontSize:10.5,color:"var(--tx3)"}}>{posAssign[p].join(", ")}</div>}
+       </div>
+       <span style={{fontSize:11,fontWeight:800,color:filled?"#10b981":"#dc2626",background:filled?"rgba(16,185,129,.1)":"rgba(220,38,38,.1)",borderRadius:6,padding:"3px 10px"}}>{filled?"✓ Terisi":"⚠ Kosong"}</span>
+      </div>
+     );
+    })}
+   </div>
+  ),
+  patroli: () => (
+   <div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+     <div style={{textAlign:"center",background:"var(--green-card)",borderRadius:10,padding:"12px 8px"}}>
+      <div style={{fontSize:28,fontWeight:900,color:"#10b981"}}>{kepatuhan}%</div>
+      <div style={{fontSize:10,color:"var(--tx3)"}}>Kepatuhan</div>
+      <div style={{marginTop:6,height:4,background:"rgba(0,0,0,.1)",borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:kepatuhan+"%",background:"#10b981",borderRadius:4}}/></div>
+     </div>
+     <div style={{textAlign:"center",background:"rgba(0,120,212,.08)",borderRadius:10,padding:"12px 8px"}}>
+      <div style={{fontSize:28,fontWeight:900,color:"var(--accent)"}}>{todP}</div>
+      <div style={{fontSize:10,color:"var(--tx3)"}}>Patroli Hari Ini</div>
+      {lastPatrol&&<div style={{fontSize:9,color:"var(--tx3)",marginTop:4}}>Terakhir {Math.floor(msSince/60000)}m lalu</div>}
+     </div>
+    </div>
+    <div style={{fontWeight:800,fontSize:12,color:"var(--tx2)",marginBottom:8}}>📊 7 Hari Terakhir</div>
+    <div style={{display:"flex",alignItems:"flex-end",gap:5,height:70}}>
+     {patrolPerDay.map((d,i)=>{
+      const h=barMax===0?0:Math.max(4,Math.round((d.count/barMax)*60));
+      const isToday=i===6;
+      return (
+       <div key={d.date} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+        <div style={{fontSize:9,fontWeight:800,color:isToday?"var(--accent)":"var(--tx3)"}}>{d.count>0?d.count:""}</div>
+        <div style={{width:"100%",height:h,background:isToday?"var(--accent)":"var(--border)",borderRadius:"3px 3px 0 0"}}/>
+        <div style={{fontSize:9,color:isToday?"var(--accent)":"var(--tx3)",fontWeight:isToday?800:400}}>{d.label}</div>
+       </div>
+      );
+     })}
+    </div>
+   </div>
+  ),
+  jadwal: () => (
+   <div>
+    <div style={{background:"var(--admin-card-bg)",border:"1.5px solid var(--border)",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
+     <div style={{fontSize:9,letterSpacing:3,color:"var(--accent)",marginBottom:3}}>JADWAL JAGA HARI INI</div>
+     <div style={{fontSize:18,fontWeight:900,color:"var(--accent-light)",letterSpacing:1,marginBottom:10}}>{["Min","Sen","Sel","Rab","Kam","Jum","Sab"][now.getDay()].toUpperCase()} — REGU {reguHari}</div>
+     <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+      {(REGU[reguHari]||[]).map((nama,i)=>{
+       const isLibur=(liburData?.[toLocalKey(now)]||[]).includes(nama);
+       return (
+        <span key={nama} style={{
+         background: isLibur ? "rgba(255,204,0,.18)" : i===0 ? "var(--accent)" : "var(--green-card)",
+         color: isLibur ? "#ffe066" : i===0 ? "#fff" : "var(--accent)",
+         border: isLibur ? "1.5px solid rgba(255,204,0,.60)" : `1.5px solid ${i===0?"var(--accent)":"var(--border)"}`,
+         borderRadius:20, padding:"4px 12px",
+         fontSize:12, fontWeight: i===0?800:600,
+         textDecoration: isLibur ? "line-through" : "none",
+         opacity: isLibur ? 0.85 : 1,
+         display:"inline-flex", alignItems:"center", gap:4,
+        }}>{isLibur ? "🌴 " : i===0?"👑 ":""}{nama}</span>
+       );
+      })}
+     </div>
+    </div>
+    <div style={{fontWeight:800,fontSize:12,color:"var(--tx2)",marginBottom:8}}>📅 Rekap Minggu Ini</div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+     <div style={{textAlign:"center",background:"var(--green-card)",borderRadius:8,padding:"10px 6px"}}>
+      <div style={{fontSize:20,fontWeight:900,color:"#10b981"}}>{weekPatrols}</div>
+      <div style={{fontSize:9,color:"var(--tx3)"}}>Patroli</div>
+     </div>
+     <div style={{textAlign:"center",background:"rgba(255,50,50,.1)",borderRadius:8,padding:"10px 6px"}}>
+      <div style={{fontSize:20,fontWeight:900,color:"#dc2626"}}>{weekIncidents}</div>
+      <div style={{fontSize:9,color:"var(--tx3)"}}>Insiden</div>
+     </div>
+     <div style={{textAlign:"center",background:"rgba(167,139,250,.1)",borderRadius:8,padding:"10px 6px"}}>
+      <div style={{fontSize:20,fontWeight:900,color:"#a78bfa"}}>{weekMutations}</div>
+      <div style={{fontSize:9,color:"var(--tx3)"}}>Serah Terima</div>
+     </div>
+    </div>
+   </div>
+  ),
+  broadcast: () => {
+   const sendBc = () => {
+    if(!bcText.trim()){toast("Ketik pesan terlebih dahulu!",false);return;}
+    setBroadcast({aktif:true,pesan:bcText.trim(),pengirim:currentUser?.name||"Pimpinan",ts:Date.now()});
+    setBcText("");
+    toast("✓ Pesan terkirim ke dashboard anggota!");
+   };
+   const clearBc = () => {setBroadcast(null);toast("Broadcast dihapus.");};
+   return (
+    <div>
+     {hasBc&&(
+      <div style={{background:"var(--green-card)",border:"1px solid var(--border)",borderLeft:"3px solid var(--accent)",borderRadius:9,padding:"10px 12px",marginBottom:12}}>
+       <div style={{fontSize:9,color:"var(--tx3)",marginBottom:3}}>{fmtDT(broadcast.ts)} · dari {broadcast.pengirim}</div>
+       <div style={{fontSize:12,color:"var(--tx)",fontWeight:600,lineHeight:1.5}}>{broadcast.pesan}</div>
+       <button onClick={clearBc} style={{marginTop:8,background:"rgba(229,62,62,.08)",border:"1px solid rgba(229,62,62,.25)",color:"#dc2626",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>🗑 Hapus Broadcast</button>
+      </div>
+     )}
+     <textarea value={bcText} onChange={e=>setBcText(e.target.value)} onKeyDown={e=>{if(e.ctrlKey&&e.key==="Enter")sendBc();}} placeholder="Ketik pesan untuk anggota..." style={{width:"100%",minHeight:80,background:"var(--card-solid)",border:"1.5px solid var(--border)",borderRadius:9,padding:"10px 12px",color:"var(--tx)",fontSize:12,resize:"none",boxSizing:"border-box",outline:"none"}}/>
+     <div style={{fontSize:9,color:"var(--tx3)",marginBottom:8}}>Ctrl+Enter untuk kirim cepat</div>
+     <button onClick={sendBc} style={{width:"100%",background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:800,cursor:"pointer"}}>📣 Kirim Broadcast</button>
+    </div>
+   );
+  },
+  instruksi: () => {
+   const send=()=>{
+    if(!instrJudul.trim()||!instrIsi.trim()){toast("Judul dan isi wajib diisi!",false);return;}
+    const ins={id:Date.now(),judul:instrJudul.trim(),isi:instrIsi.trim(),prioritas:instrPrio,targetRegu:instrTgt,aktif:true,ts:Date.now(),dari:currentUser?.name||"Pimpinan"};
+    setInstruksi(prev=>[ins,...(prev||[])]);
+    setInstrJudul("");setInstrIsi("");
+    toast("✓ Instruksi dikirim!");
+   };
+   return (
+    <div>
+     {visibel.length>0&&(
+      <div style={{marginBottom:14}}>
+       <div style={{fontSize:11,fontWeight:800,color:"var(--tx3)",marginBottom:8}}>INSTRUKSI AKTIF ({visibel.length})</div>
+       {visibel.slice(0,3).map(ins=>{
+        const col=ins.prioritas==="Penting"?"#dc2626":ins.prioritas==="Info"?"#10b981":"var(--accent)";
+        return (
+         <div key={ins.id} style={{borderLeft:`3px solid ${col}`,paddingLeft:10,marginBottom:10,paddingBottom:10,borderBottom:"1px solid var(--border)"}}>
+          <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:3}}>
+           <span style={{fontSize:10,fontWeight:800,color:col,background:col+"22",borderRadius:4,padding:"1px 6px"}}>{ins.prioritas}</span>
+           <span style={{fontSize:10,color:"var(--tx3)"}}>{fmtDT(ins.ts)}</span>
+          </div>
+          <div style={{fontSize:12.5,fontWeight:800,color:"var(--tx2)"}}>{ins.judul}</div>
+          <div style={{fontSize:11,color:"var(--tx)",lineHeight:1.5,marginTop:2}}>{ins.isi.slice(0,80)}{ins.isi.length>80?"…":""}</div>
+         </div>
+        );
+       })}
+      </div>
+     )}
+     <div style={{fontSize:11,fontWeight:800,color:"var(--tx3)",marginBottom:8}}>+ BUAT INSTRUKSI BARU</div>
+     <input value={instrJudul} onChange={e=>setInstrJudul(e.target.value)} placeholder="Judul instruksi..." style={{width:"100%",background:"var(--card-solid)",border:"1.5px solid var(--border)",borderRadius:8,padding:"9px 12px",color:"var(--tx)",fontSize:12,marginBottom:8,boxSizing:"border-box",outline:"none"}}/>
+     <textarea value={instrIsi} onChange={e=>setInstrIsi(e.target.value)} placeholder="Isi instruksi..." style={{width:"100%",minHeight:70,background:"var(--card-solid)",border:"1.5px solid var(--border)",borderRadius:8,padding:"9px 12px",color:"var(--tx)",fontSize:12,resize:"none",boxSizing:"border-box",outline:"none",marginBottom:8}}/>
+     <div style={{display:"flex",gap:8,marginBottom:12}}>
+      {["Normal","Penting","Info"].map(p=>(
+       <button key={p} onClick={()=>setInstrPrio(p)} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1.5px solid ${instrPrio===p?"var(--accent)":"var(--border)"}`,background:instrPrio===p?"var(--accent)":"transparent",color:instrPrio===p?"#fff":"var(--tx3)",fontSize:11,fontWeight:700,cursor:"pointer"}}>{p}</button>
+      ))}
+     </div>
+     <div style={{display:"flex",gap:8,marginBottom:12}}>
+      {["Semua","1","2","3"].map(t=>(
+       <button key={t} onClick={()=>setInstrTgt(t)} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1.5px solid ${instrTgt===t?"var(--accent)":"var(--border)"}`,background:instrTgt===t?"var(--accent)":"transparent",color:instrTgt===t?"#fff":"var(--tx3)",fontSize:11,fontWeight:700,cursor:"pointer"}}>{t==="Semua"?"Semua":"Regu "+t}</button>
+      ))}
+     </div>
+     <button onClick={send} style={{width:"100%",background:"#dc2626",color:"#fff",border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:800,cursor:"pointer"}}>🚨 Kirim Instruksi</button>
+    </div>
+   );
+  },
+  incident: () => (
+   <div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:actI>0?14:0}}>
+     <div style={{textAlign:"center",background:"rgba(255,50,50,.1)",borderRadius:10,padding:"14px 8px"}}>
+      <div style={{fontSize:28,fontWeight:900,color:"#dc2626"}}>{actI}</div>
+      <div style={{fontSize:10,color:"var(--tx3)"}}>Aktif / Proses</div>
+     </div>
+     <div style={{textAlign:"center",background:"var(--green-card)",borderRadius:10,padding:"14px 8px"}}>
+      <div style={{fontSize:28,fontWeight:900,color:"#10b981"}}>{doneI}</div>
+      <div style={{fontSize:10,color:"var(--tx3)"}}>Selesai</div>
+     </div>
+    </div>
+    {actI>0&&(
+     <div>
+      <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:8}}>Insiden aktif:</div>
+      {incidents.filter(i=>i.status!=="Selesai").map(inc=>(
+       <div key={inc.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--tx2)",flex:1}}>{inc.type||inc.judul||"Insiden"}</div>
+        <span style={{fontSize:10,fontWeight:800,color:"#f59e0b",background:"rgba(245,158,11,.1)",borderRadius:5,padding:"2px 8px"}}>{inc.status}</span>
+       </div>
+      ))}
+     </div>
+    )}
+    <button onClick={()=>{setHeroCard(null);setTab&&setTab("incident");}} style={{marginTop:14,width:"100%",background:"var(--accent)",color:"#fff",border:"none",borderRadius:9,padding:"10px",fontSize:12,fontWeight:800,cursor:"pointer"}}>Buka Tab Insiden →</button>
+   </div>
+  ),
  };
- const clearBc = () => {
- setBroadcast(null);
- toast("Broadcast dihapus.");
- };
+
+ // --- Quick action buttons config ---
+ const btnRows = [
+  [
+   {id:"alert",    icon:"🔴", label:"Status Pos", badge: emptyPos.length>0?emptyPos.length:null, badgeCol:"#dc2626"},
+   {id:"patroli",  icon:"⚡", label:"Patroli",    badge: patrolOverdue?"!":null, badgeCol:"#f59e0b"},
+   {id:"incident",  icon:"🚨", label:"Insiden",    badge: actI>0?actI:null, badgeCol:"#dc2626"},
+  ],
+  [
+   {id:"jadwal",    icon:"📅", label:"Jadwal",     badge: null, navTo:"jadwal"},
+   {id:"broadcast", icon:"📣", label:"Broadcast",  badge: hasBc?"✓":null, badgeCol:"#10b981"},
+   {id:"instruksi", icon:"📋", label:"Instruksi",  badge: visibel.length>0?visibel.length:null, badgeCol:"#a78bfa"},
+  ],
+ ];
+
+ const _iL = typeof document!=="undefined"&&document.documentElement.classList.contains("light");
+ const heroBg = emptyPos.length>1
+  ? (_iL?"linear-gradient(135deg,#fff5f5,#ffe8e8)":"linear-gradient(135deg,#7a1010,#dc2626)")
+  : emptyPos.length===1
+  ? (_iL?"linear-gradient(135deg,#fffbf0,#fff3cc)":"linear-gradient(135deg,#5a4a00,#c49a3c)")
+  : (_iL?"linear-gradient(135deg,#f0fff8,#e0f7ef)":"linear-gradient(135deg,var(--qr-border),#00cc66)");
+ const heroColor = _iL?(emptyPos.length>1?"#b91c1c":emptyPos.length===1?"#92400e":"#065f46"):"#fff";
+
+ const CARD_TITLES = {alert:"📍 Status Pos Real-Time",patroli:"⚡ Patroli",jadwal:"📅 Jadwal & Rekap",broadcast:"📣 Broadcast Pesan",instruksi:"📋 Instruksi Pimpinan",incident:"🚨 Insiden"};
+
  return (
- <div style={{
- background:"var(--card-solid)",
- border:"1.5px solid var(--green-border)",
- borderRadius:14,
- padding:"14px 16px",
- marginBottom:14,
- }}>
- <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
- <span style={{fontSize:16}}>📣</span>
- <div>
- <div style={{fontSize:11,fontWeight:800,color:"var(--accent)",letterSpacing:1,textTransform:"uppercase"}}>Broadcast Pesan</div>
- <div style={{fontSize:9.5,color:"var(--tx3)"}}>Pesan tampil di Hero dashboard semua anggota</div>
- </div>
- {hasBc && (
- <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:5}}>
- <div style={{width:7,height:7,borderRadius:"50%",background:"var(--ok)",boxShadow:"0 0 6px var(--ok)"}}/>
- <span style={{fontSize:9,color:"var(--ok)",fontWeight:700}}>AKTIF</span>
- </div>
- )}
- </div>
- {hasBc && (
- <div style={{
- background:"var(--green-card)",
- border:"1px solid var(--border)",
- borderLeft:"3px solid var(--accent)",
- borderRadius:9,
- padding:"9px 12px",
- marginBottom:10,
- }}>
- <div style={{fontSize:9,color:"var(--tx3)",marginBottom:3}}>{fmtDT(broadcast.ts)} · dari {broadcast.pengirim}</div>
- <div style={{fontSize:12,color:"var(--tx)",fontWeight:600,lineHeight:1.5}}>{broadcast.pesan}</div>
- <button onClick={clearBc} style={{
- marginTop:8,background:"rgba(229,62,62,.08)",border:"1px solid rgba(229,62,62,.25)",
- borderRadius:6,padding:"4px 12px",fontSize:10,color:"#e53e3e",
- fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,
- }}>
- 🗑 Hapus Broadcast
- </button>
- </div>
- )}
- <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
- <textarea
- value={bcText}
- onChange={e=>setBcText(e.target.value)}
- placeholder={hasBc ? "Ketik pesan baru untuk mengganti..." : "Ketik pesan untuk anggota…"}
- rows={2}
- style={{
- flex:1,background:"var(--inp-bg)",border:"1px solid var(--border2)",
- borderRadius:9,padding:"9px 12px",fontSize:12,color:"var(--tx)",
- fontFamily:"inherit",resize:"none",lineHeight:1.5,
- outline:"none",
- }}
- onKeyDown={e=>{if(e.key==="Enter"&&e.ctrlKey)sendBc();}}
- />
- <button onClick={sendBc} style={{
- background:"var(--accent)",border:"none",borderRadius:9,
- padding:"9px 14px",fontSize:12,color:"#fff",fontWeight:800,
- cursor:"pointer",fontFamily:"inherit",flexShrink:0,
- opacity:bcText.trim()?1:.45,transition:"opacity .2s",
- }}>
- Kirim
- </button>
- </div>
- <div style={{fontSize:9,color:"var(--tx4)",marginTop:5}}>Ctrl+Enter untuk kirim cepat</div>
- </div>
- );
- })()}
- {isAdmin && (() => {
- const [insForm, setInsForm] = React.useState({judul:"",isi:"",prioritas:"Normal",targetRegu:"Semua"});
- const [insOpen, setInsOpen] = React.useState(false);
- const fi = (k,v) => setInsForm(f=>({...f,[k]:v}));
- const submitIns = () => {
- if(!insForm.judul.trim()||!insForm.isi.trim()){toast("Judul & isi instruksi wajib diisi!",false);return;}
- const newIns = {...insForm, id:Date.now(), ts:Date.now(), aktif:true, selesai:false, pengirim:currentUser?.name||"Pimpinan"};
- setInstruksi([newIns,...(instruksi||[])]);
- setInsForm({judul:"",isi:"",prioritas:"Normal",targetRegu:"Semua"});
- setInsOpen(false);
- toast("✓ Instruksi berhasil dikirim ke anggota!");
- };
- const aktifCount = (instruksi||[]).filter(i=>i.aktif&&!i.selesai).length;
- return (
- <div style={{
- background:"var(--card-solid)",
- border:"1.5px solid rgba(220,38,38,.30)",
- borderRadius:14,
- padding:"14px 16px",
- marginBottom:14,
- }}>
- <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
- <span style={{fontSize:16}}>📋</span>
- <div style={{flex:1}}>
- <div style={{fontSize:11,fontWeight:800,color:"#dc2626",letterSpacing:1,textTransform:"uppercase"}}>Instruksi Pimpinan</div>
- <div style={{fontSize:9.5,color:"var(--tx3)"}}>Instruksi tampil di Hero Card semua anggota regu</div>
- </div>
- <div style={{display:"flex",alignItems:"center",gap:6}}>
- {aktifCount>0 && (
- <div style={{display:"flex",alignItems:"center",gap:5}}>
- <div style={{width:7,height:7,borderRadius:"50%",background:"#dc2626",boxShadow:"0 0 6px #dc2626"}}/>
- <span style={{fontSize:9,color:"#dc2626",fontWeight:700}}>{aktifCount} AKTIF</span>
- </div>
- )}
- <button onClick={()=>setInsOpen(v=>!v)} style={{
- background:insOpen?"var(--card2)":"rgba(220,38,38,.12)",
- border:`1px solid ${insOpen?"var(--border2)":"rgba(220,38,38,.35)"}`,
- borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:800,
- color:insOpen?"var(--tx3)":"#dc2626",cursor:"pointer",fontFamily:"inherit",
- }}>
- {insOpen?"✕ Tutup":"+ Buat Instruksi"}
- </button>
- </div>
- </div>
- {aktifCount>0 && !insOpen && (
- <div style={{
- background:"rgba(220,38,38,.07)",
- border:"1px solid rgba(220,38,38,.20)",
- borderLeft:"3px solid #dc2626",
- borderRadius:9,padding:"9px 12px",marginBottom:0,
- }}>
- <div style={{fontSize:9,color:"var(--tx3)",marginBottom:3}}>Instruksi terbaru aktif</div>
- <div style={{fontSize:12,color:"var(--tx)",fontWeight:600,lineHeight:1.5}}>
- {(instruksi||[]).filter(i=>i.aktif&&!i.selesai)[0]?.judul}
- </div>
- <div style={{fontSize:10,color:"#dc2626",marginTop:4,fontWeight:700}}>
- {(instruksi||[]).filter(i=>i.aktif&&!i.selesai)[0]?.targetRegu==="Semua"?"→ Semua Regu":`→ Regu ${(instruksi||[]).filter(i=>i.aktif&&!i.selesai)[0]?.targetRegu}`}
- </div>
- </div>
- )}
- {insOpen&&(
- <div style={{animation:"heroContentIn .2s ease both"}}>
- <div style={{background:"rgba(220,38,38,.07)",borderRadius:9,padding:"4px 10px",marginBottom:10,fontSize:10,color:"var(--tx3)"}}>
- ⚠️ Instruksi akan langsung tampil di Hero Card anggota
- </div>
- <div style={{marginBottom:8}}>
- <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:4}}>Judul Instruksi</div>
- <input value={insForm.judul} onChange={e=>fi("judul",e.target.value)}
- placeholder="Contoh: Siaga penuh malam ini"
- style={{width:"100%",background:"var(--inp-bg)",border:"1px solid var(--border2)",borderRadius:8,padding:"8px 12px",fontSize:12,color:"var(--tx)",fontFamily:"inherit",outline:"none"}}
- />
- </div>
- <div style={{marginBottom:8}}>
- <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:4}}>Isi Instruksi</div>
- <textarea value={insForm.isi} onChange={e=>fi("isi",e.target.value)}
- placeholder="Detail perintah / arahan dari pimpinan..."
- rows={3}
- style={{width:"100%",background:"var(--inp-bg)",border:"1px solid var(--border2)",borderRadius:8,padding:"8px 12px",fontSize:12,color:"var(--tx)",fontFamily:"inherit",resize:"none",lineHeight:1.5,outline:"none"}}
- />
- </div>
- <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
- <div>
- <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:4}}>Prioritas</div>
- <select value={insForm.prioritas} onChange={e=>fi("prioritas",e.target.value)}
- style={{width:"100%",background:"var(--card2)",border:"1px solid var(--border2)",borderRadius:8,padding:"8px 10px",fontSize:12,color:"var(--tx)",fontFamily:"inherit",outline:"none"}}>
- <option>Normal</option><option>Penting</option><option>Info</option>
- </select>
- </div>
- <div>
- <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:4}}>Target Regu</div>
- <select value={insForm.targetRegu} onChange={e=>fi("targetRegu",e.target.value)}
- style={{width:"100%",background:"var(--card2)",border:"1px solid var(--border2)",borderRadius:8,padding:"8px 10px",fontSize:12,color:"var(--tx)",fontFamily:"inherit",outline:"none"}}>
- <option value="Semua">Semua Regu</option>
- <option value="1">Regu 1</option><option value="2">Regu 2</option><option value="3">Regu 3</option>
- </select>
- </div>
- </div>
- <button onClick={submitIns} style={{
- width:"100%",background:"#dc2626",border:"none",borderRadius:9,
- padding:"10px 0",fontSize:13,fontWeight:800,color:"#fff",
- cursor:"pointer",fontFamily:"inherit",
- }}>
- 🚨 Kirim Instruksi
- </button>
- </div>
- )}
- </div>
- );
- })()}
- <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
- <div style={{background:"var(--green-card)",border:"1.5px solid #bbf7d0",borderRadius:12,padding:"12px 14px"}}>
- <div style={{fontSize:10,color:"var(--tx3)",marginBottom:2}}>Kepatuhan Patroli</div>
- <div style={{fontSize:28,fontWeight:900,color:"var(--ok)"}}>{kepatuhan}%</div>
- <div style={{fontSize:10,color:"var(--tx3)"}}>{todP} patroli hari ini</div>
- <div style={{marginTop:6,height:4,background:"rgba(0,120,212,.1)",borderRadius:4,overflow:"hidden"}}>
- <div style={{height:"100%",width:kepatuhan+"%",background:"var(--ok)",borderRadius:4,transition:"width .6s"}}/>
- </div>
- </div>
- <div style={{background:actI>0?"rgba(255,50,50,.1)":"var(--green-card)",border:`1.5px solid ${actI>0?"rgba(255,50,50,.3)":"var(--green-border)"}`,borderRadius:12,padding:"12px 14px"}}>
- <div style={{fontSize:10,color:"var(--tx3)",marginBottom:2}}>Insiden Aktif</div>
- <div style={{fontSize:28,fontWeight:900,color:actI>0?"#dc2626":"var(--ok)"}}>{actI}</div>
- <div style={{fontSize:10,color:"var(--tx3)"}}>{doneI} selesai</div>
- </div>
- <div style={{background:"rgba(0,120,212,.1)",border:"1px solid var(--border)",borderRadius:12,padding:"12px 14px"}}>
- <div style={{fontSize:10,color:"var(--tx3)",marginBottom:2}}>Pos Terisi</div>
- <div style={{fontSize:28,fontWeight:900,color:"var(--accent)"}}>{filledPos.length}<span style={{fontSize:13,fontWeight:600,color:"var(--tx3)"}}>/{POS_LIST.length}</span></div>
- <div style={{fontSize:10,color:emptyPos.length>0?"#dc2626":"var(--ok)"}}>{emptyPos.length>0?`⚠ ${emptyPos.length} kosong`:"Semua terisi ✓"}</div>
- </div>
- <div style={{background:"rgba(167,139,250,.1)",border:"1.5px solid #ddd6fe",borderRadius:12,padding:"12px 14px"}}>
- <div style={{fontSize:10,color:"var(--tx3)",marginBottom:2}}>Instruksi Aktif</div>
- <div style={{fontSize:28,fontWeight:900,color:"#a78bfa"}}>{visibel.length}</div>
- <div style={{fontSize:10,color:"var(--tx3)"}}>untuk regu ini</div>
- </div>
- </div>
- {(packages||guests)&&(
- <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
- {[
- {l:"Paket Menunggu",v:(packages||[]).filter(p=>p.status==="Belum Diambil").length,col:"#ff9900",bg:"rgba(255,153,0,.07)",tab:"package"},
- {l:"Tamu Menginap",v:(guests||[]).filter(g=>g.status==="Masih Ada").length,col:"#a78bfa",bg:"rgba(167,139,250,.08)",tab:"guest"},
- ].map(c=>(
- <div key={c.l} onClick={()=>setTab&&setTab(c.tab)} style={{background:"var(--card-solid)",border:`1.5px solid ${c.col}30`,borderRadius:12,padding:"14px 16px",cursor:"pointer",position:"relative",overflow:"hidden"}}>
- <div style={{position:"absolute",top:0,right:0,width:60,height:60,background:c.col,opacity:.05,borderRadius:"0 12px 0 60px",pointerEvents:"none"}}/>
- <div className="stat-number" style={{color:c.col,marginTop:4,fontSize:28}}>{c.v}</div>
- <div className="stat-label">{c.l}</div>
- </div>
- ))}
- </div>
- )}
- <div style={{background:"var(--card-solid)",border:"1px solid var(--border2)",borderRadius:12,padding:"14px",marginBottom:14}}>
- <div style={{fontWeight:800,fontSize:13,color:"var(--tx2)",marginBottom:12}}>📊 Patroli 7 Hari Terakhir</div>
- <div style={{display:"flex",alignItems:"flex-end",gap:6,height:80}}>
- {patrolPerDay.map((d,i)=>{
- const h = barMax===0?0:Math.max(4,Math.round((d.count/barMax)*72));
- const isToday = i===6;
- return (
- <div key={d.date} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
- <div style={{fontSize:9,fontWeight:800,color:isToday?"var(--accent)":"var(--tx3)"}}>{d.count>0?d.count:""}</div>
- <div style={{width:"100%",height:h,background:isToday?"var(--accent)":"var(--border)",borderRadius:"3px 3px 0 0",transition:"height .4s"}}/>
- <div style={{fontSize:9,color:isToday?"var(--accent)":"var(--tx3)",fontWeight:isToday?800:400}}>{d.label}</div>
- </div>
- );
- })}
- </div>
- </div>
- <div style={{background:"var(--card-solid)",border:"1px solid var(--border2)",borderRadius:12,padding:"14px",marginBottom:14}}>
- <div style={{fontWeight:800,fontSize:13,color:"var(--tx2)",marginBottom:10}}>📍 Status Pos Real-Time</div>
- {POS_LIST.map(p=>{
- const filled=posAssign[p]?.length>0;
- return (
- <div key={p} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
- <div>
- <div style={{fontSize:12.5,fontWeight:700,color:"var(--tx2)"}}>{p}</div>
- {filled&&<div style={{fontSize:10.5,color:"var(--tx3)"}}>{posAssign[p].join(", ")}</div>}
- </div>
- <span style={{fontSize:11,fontWeight:800,color:filled?"var(--ok)":"#dc2626",background:filled?"var(--green-card)":"rgba(255,50,50,.1)",borderRadius:6,padding:"3px 9px"}}>
- {filled?"✓ Terisi":"⚠ Kosong"}
- </span>
- </div>
- );
- })}
- </div>
- <div style={{background:"var(--card-solid)",border:"1px solid var(--border2)",borderRadius:12,padding:"14px",marginBottom:14}}>
- <div style={{fontWeight:800,fontSize:13,color:"var(--tx2)",marginBottom:10}}>🚨 Rekap Insiden</div>
- <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:actI>0?12:0}}>
- <div style={{textAlign:"center",background:"rgba(255,50,50,.1)",borderRadius:8,padding:"10px 8px"}}>
- <div style={{fontSize:22,fontWeight:900,color:"#dc2626"}}>{actI}</div>
- <div style={{fontSize:10,color:"var(--tx3)"}}>Aktif / Proses</div>
- </div>
- <div style={{textAlign:"center",background:"var(--green-card)",borderRadius:8,padding:"10px 8px"}}>
- <div style={{fontSize:22,fontWeight:900,color:"var(--ok)"}}>{doneI}</div>
- <div style={{fontSize:10,color:"var(--tx3)"}}>Selesai</div>
- </div>
- </div>
- {actI>0&&(
- <div>
- <div style={{fontSize:11,fontWeight:700,color:"var(--tx3)",marginBottom:6}}>Insiden aktif:</div>
- {incidents.filter(i=>i.status!=="Selesai").slice(0,3).map(inc=>(
- <div key={inc.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid var(--border)"}}>
- <div style={{fontSize:12,fontWeight:700,color:"var(--tx2)",flex:1}}>{inc.type||inc.judul||"Insiden"}</div>
- <span style={{fontSize:10,fontWeight:800,color:"#ffcc00",background:"rgba(255,204,0,.07)",borderRadius:5,padding:"2px 7px"}}>{inc.status}</span>
- </div>
- ))}
- </div>
- )}
- </div>
- <div style={{background:"var(--card-solid)",border:"1px solid var(--border2)",borderRadius:12,padding:"14px",marginBottom:14}}>
- <div style={{fontWeight:800,fontSize:13,color:"var(--tx2)",marginBottom:10}}>📅 Rekap Minggu Ini</div>
- <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
- <div style={{textAlign:"center",background:"var(--green-card)",borderRadius:8,padding:"10px 6px"}}>
- <div style={{fontSize:20,fontWeight:900,color:"var(--ok)"}}>{weekPatrols}</div>
- <div style={{fontSize:9,color:"var(--tx3)"}}>Patroli</div>
- </div>
- <div style={{textAlign:"center",background:"rgba(255,50,50,.1)",borderRadius:8,padding:"10px 6px"}}>
- <div style={{fontSize:20,fontWeight:900,color:"#dc2626"}}>{weekIncidents}</div>
- <div style={{fontSize:9,color:"var(--tx3)"}}>Insiden</div>
- </div>
- <div style={{textAlign:"center",background:"rgba(167,139,250,.1)",borderRadius:8,padding:"10px 6px"}}>
- <div style={{fontSize:20,fontWeight:900,color:"#a78bfa"}}>{weekMutations}</div>
- <div style={{fontSize:9,color:"var(--tx3)"}}>Serah Terima</div>
- </div>
- </div>
- </div>
- {visibel.length>0&&(
- <div style={{background:"var(--card-solid)",border:"1px solid var(--border2)",borderRadius:12,padding:"14px",marginBottom:14}}>
- <div style={{fontWeight:800,fontSize:13,color:"var(--tx2)",marginBottom:10}}>📋 Instruksi Aktif ({visibel.length})</div>
- {visibel.map(ins=>{
- const col=ins.prioritas==="Penting"?"#dc2626":ins.prioritas==="Info"?"var(--ok)":"var(--accent)";
- const bg=ins.prioritas==="Penting"?"rgba(255,50,50,.1)":ins.prioritas==="Info"?"var(--green-card)":"var(--green-card)";
- return (
- <div key={ins.id} style={{borderLeft:`3px solid ${col}`,paddingLeft:10,marginBottom:10}}>
- <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:3}}>
- <span style={{fontSize:10,fontWeight:800,color:col,background:bg,borderRadius:4,padding:"1px 6px"}}>{ins.prioritas}</span>
- <span style={{fontSize:10,color:"var(--tx3)"}}>{fmtDT(ins.ts)}</span>
- </div>
- <div style={{fontSize:12.5,fontWeight:800,color:"var(--tx2)"}}>{ins.judul}</div>
- <div style={{fontSize:11,color:"var(--tx)",lineHeight:1.5,marginTop:2}}>{ins.isi.slice(0,100)}{ins.isi.length>100?"…":""}</div>
- </div>
- );
- })}
- </div>
- )}
- <PimpinanPatrolLog patrols={patrols} now={now}/>
- </div>
+  <div style={{paddingBottom:8}}>
+   {/* Header bar ringkas */}
+   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,padding:"0 2px"}}>
+    <div style={{fontSize:10,color:"var(--tx3)"}}>BBPKA II Jatinangor · {now.toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"})}</div>
+    <div style={{fontSize:11,fontWeight:800,color:statusColor}}>● {systemStatus}</div>
+   </div>
+
+   {/* Hero Card panel — tampil di atas tombol */}
+   {heroCard&&CARDS[heroCard]&&(
+    <div style={{background:"var(--card-solid)",border:"1.5px solid var(--accent)",borderRadius:16,padding:"16px",marginBottom:10,animation:"fadeIn .15s ease"}}>
+     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:900,color:"var(--tx)"}}>{CARD_TITLES[heroCard]}</div>
+      <button onClick={()=>setHeroCard(null)} style={{background:"none",border:"none",color:"var(--tx3)",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>×</button>
+     </div>
+     {CARDS[heroCard]()}
+    </div>
+   )}
+
+   {/* Quick action grid */}
+   {btnRows.map((row,ri)=>(
+    <div key={ri} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+     {row.map(btn=>(
+      <button key={btn.id} onClick={()=>{ if(btn.navTo){setTab&&setTab(btn.navTo);setHeroCard(null);} else {setHeroCard(heroCard===btn.id?null:btn.id);} }} style={{position:"relative",background:heroCard===btn.id?"var(--accent)":"var(--card-solid)",border:`1.5px solid ${heroCard===btn.id?"var(--accent)":"var(--border)"}`,borderRadius:12,padding:"12px 6px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,transition:"all .15s"}}>
+       {btn.badge!=null&&(
+        <div style={{position:"absolute",top:6,right:6,background:btn.badgeCol||"#dc2626",color:"#fff",borderRadius:10,fontSize:9,fontWeight:900,minWidth:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{btn.badge}</div>
+       )}
+       <span style={{fontSize:22}}>{btn.icon}</span>
+       <span style={{fontSize:10,fontWeight:700,color:heroCard===btn.id?"#fff":"var(--tx2)"}}>{btn.label}</span>
+      </button>
+     ))}
+    </div>
+   ))}
+
+   {/* Stats mini — Paket & Tamu */}
+   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+    {[
+     {l:"Paket Menunggu",v:pendingPkg,col:"#f59e0b"},
+     {l:"Tamu Menginap",v:stayingGuest,col:"#a78bfa"},
+    ].map(s=>(
+     <div key={s.l} style={{background:"var(--card-solid)",border:"1.5px solid var(--border)",borderRadius:10,padding:"8px 12px",display:"flex",alignItems:"center",gap:10}}>
+      <div style={{fontSize:22,fontWeight:900,color:s.col}}>{s.v}</div>
+      <div style={{fontSize:10,color:"var(--tx3)",lineHeight:1.3}}>{s.l}</div>
+     </div>
+    ))}
+   </div>
+  </div>
  );
 }
 function PimpinanPatrolLog({patrols, now}) {
@@ -6063,7 +5987,7 @@ const DEFAULT_INVENTARIS = [
  {id:"inv6", nama:"Police Line", jumlah:"1 unit"},
 ];
 function InventarisTab({inventarisDaftar, setInventarisDaftar, inventarisCek, setInventarisCek, toast, isAdmin, canEdit, now}) {
- const todayKey = now.toISOString().slice(0,10);
+ const todayKey = toLocalKey(now);
  const cekHari = inventarisCek[todayKey] || {};
  const [editOpen, setEditOpen] = useState(false);
  const [editItem, setEditItem] = useState(null); // {id, nama, jumlah} or null for new
@@ -6481,7 +6405,6 @@ const NAV_TABS_ADMIN = [
  {id:"dashboard",label:"Dashboard",icon:"home"},
  {id:"search",label:"Cari",icon:"search"},
  {id:"members",label:"Anggota",icon:"ppl"},
- {id:"incident",label:"Insiden",icon:"alert"},
  {id:"more",label:"Lainnya",icon:"menu"},
 ];
 const APP_VERSION = "v2.2-update-1"; // ganti versi ini untuk trigger reset ulang
@@ -6712,7 +6635,7 @@ function App() {
  }, [resetTimer]);
  const shift = getShift(now);
  const reguHari = getReguHari(now);
- const todayKey = new Date().toISOString().slice(0,10);
+ const todayKey = toLocalKey(new Date());
  const [posAssign, setPosAssign] = useData("pad_pos_" + todayKey, {});
  const [incidents, setIncidents] = useData("pad_inc", []);
  const [packages, setPackages] = useData("pad_pkg", []);
@@ -6721,7 +6644,7 @@ function App() {
  const [mutations, setMutations] = useData("pad_mut", []);
  useEffect(() => {
  const stored = localStorage.getItem("pad_last_regu_day");
- const currentReguDay = getReguHari(new Date()) + "_" + new Date().toISOString().slice(0, 10);
+ const currentReguDay = getReguHari(new Date()) + "_" + toLocalKey(new Date());
  if (stored && stored !== currentReguDay) {
  setPatrols([]);
  }
@@ -6831,7 +6754,6 @@ function App() {
  { id: "instruksi", label: "Instruksi", icon: "file", color: "var(--cb-red)", glow: "var(--cb-red-glow)" },
  { id: "mutation", label: "Mutasi", icon: "rot", color: "var(--cb-blue)", glow: "var(--cb-blue-glow)" },
  { id: "inventaris", label: "Inventaris", icon: "pkg", color: "var(--cb-yellow)", glow: "var(--cb-yellow-glow)" },
- { id: "absen", label: "Absensi", icon: "cal", color: "var(--cb-purple)", glow: "var(--cb-purple-glow)" },
  { id: "notifToggle", label: "Notifikasi", icon: "bell", isNotif: true },
  { id: "accentPicker", label: "Tampilan", icon: "star", isAccent: true },
  { id: "changePin", label: "Ganti PIN", icon: "key", isPin: true },
@@ -7061,7 +6983,7 @@ function App() {
  {tab === "pimpinan" && <PimpinanTab now={now} patrols={patrols} incidents={incidents} posAssign={posAssign} instruksi={instruksi} setInstruksi={setInstruksi} mutations={mutations} currentUser={currentUser} packages={packages} guests={guests} reguHari={reguHari} liburData={liburData} setLiburData={setLiburData} setTab={setTab} canEdit={canEdit} isAdmin={isAdmin} statusPimpinan={statusPimpinan} setStatusPimpinan={setStatusPimpinan} toast={toast} broadcast={broadcast} setBroadcast={setBroadcast} />}
  {tab === "dashboard" && !isAdmin && <DashTab now={now} shift={shift} reguHari={reguHari} posAssign={posAssign} incidents={incidents} packages={packages} guests={guests} patrols={patrols} standJaga={standJaga} mutations={mutations} posRollingLog={posRollingLog} liburData={liburData} setLiburData={setLiburData} instruksi={instruksi} currentUser={currentUser} setTab={setTab} canEdit={canEdit} isAdmin={isAdmin} keluarData={keluarData} statusPimpinan={statusPimpinan} setStatusPimpinan={setStatusPimpinan} toast={toast} broadcast={broadcast} />}
  {tab === "dashboard" && isAdmin && <PimpinanTab now={now} patrols={patrols} incidents={incidents} posAssign={posAssign} instruksi={instruksi} setInstruksi={setInstruksi} mutations={mutations} currentUser={currentUser} packages={packages} guests={guests} reguHari={reguHari} liburData={liburData} setLiburData={setLiburData} setTab={setTab} canEdit={canEdit} isAdmin={isAdmin} statusPimpinan={statusPimpinan} setStatusPimpinan={setStatusPimpinan} toast={toast} broadcast={broadcast} setBroadcast={setBroadcast} />}
- {tab === "jadwal" && <JadwalTab now={now} liburData={liburData} isAdmin={isAdmin} setTab={setTab} />}
+ {tab === "jadwal" && <JadwalTab now={now} liburData={liburData} setLiburData={setLiburData} reguHari={reguHari} isAdmin={isAdmin} canEdit={canEdit} toast={toast} setTab={setTab} />}
  {tab === "pos" && <PosTab reguHari={reguHari} posAssign={posAssign} setPosAssign={setPosAssign} posRollingLog={posRollingLog} setPosRollingLog={setPosRollingLog} toast={toast} canEdit={canEdit} isAdmin={isAdmin} currentUser={currentUser} />}
  {tab === "stand" && <StandTab standJaga={standJaga} setStandJaga={setStandJaga} posAssign={posAssign} reguHari={reguHari} toast={toast} canEdit={canEdit} currentUser={currentUser} />}
  {tab === "patrol" && <PatrolTab posAssign={posAssign} patrols={patrols} setPatrols={setPatrols} toast={toast} canEdit={canEdit} isAdmin={isAdmin} currentUser={currentUser} />}
