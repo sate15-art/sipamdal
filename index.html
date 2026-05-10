@@ -2151,6 +2151,29 @@ transition: "all .25s ease",
 cursor: "pointer",
 } })))))));
 })()));
+(() => {
+const h = now.getHours(), m = now.getMinutes(), nowMin = h * 60 + m;
+const SESI_FP = [
+{ id: 1, ket: "Masuk",     jam: "06:00\u201308:00", sH:6,  sM:0, eH:8,  eM:0  },
+{ id: 2, ket: "Malam",     jam: "23:00\u201323:59", sH:23, sM:0, eH:23, eM:59 },
+{ id: 3, ket: "Dini Hari", jam: "00:01\u201303:00", sH:0,  sM:1, eH:3,  eM:0  },
+{ id: 4, ket: "Pulang",    jam: "06:00\u201308:00", sH:6,  sM:0, eH:8,  eM:0  },
+];
+const aktifIdx = SESI_FP.findIndex(s => nowMin >= s.sH*60+s.sM && nowMin <= s.eH*60+s.eM);
+const fpEl = React.createElement("div", { style: { marginTop: 10, background: "rgba(0,0,0,.2)", borderRadius: 10, padding: "9px 11px", border: `1px solid ${aktifIdx >= 0 ? "var(--accent)" : "rgba(255,255,255,.08)"}`, transition: "border .3s", position: "relative", overflow: "hidden" } },
+aktifIdx >= 0 && React.createElement("div", { style: { position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg,var(--accent),transparent)" } }),
+React.createElement("div", { style: { fontSize: 9, fontWeight: 800, color: aktifIdx >= 0 ? "var(--accent)" : "rgba(255,255,255,.35)", textTransform: "uppercase", letterSpacing: .8, marginBottom: 7, display: "flex", alignItems: "center", gap: 6 } },
+"\uD83D\uDC46 Jadwal Finger Print",
+aktifIdx >= 0 && React.createElement("span", { style: { background: "var(--accent)", color: "#000", borderRadius: 4, padding: "1px 6px", fontSize: 8, fontWeight: 900 } }, "AKTIF")),
+React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 } },
+SESI_FP.map((s, i) => {
+const aktif = i === aktifIdx;
+return React.createElement("div", { key: s.id, style: { borderRadius: 7, padding: "5px 8px", background: aktif ? "rgba(0,212,255,.12)" : "rgba(255,255,255,.04)", border: `1px solid ${aktif ? "var(--accent)" : "rgba(255,255,255,.06)"}`, transition: "all .3s" } },
+React.createElement("div", { style: { fontSize: 8, fontWeight: 700, color: aktif ? "var(--accent)" : "rgba(255,255,255,.3)" } }, "Sesi " + s.id + " \u00B7 " + s.ket),
+React.createElement("div", { style: { fontSize: 10.5, fontWeight: 900, color: aktif ? "var(--tx)" : "rgba(255,255,255,.4)", marginTop: 1 } }, s.jam));
+})));
+setTimeout(() => { const hero = document.querySelector(".hero-hud-scanline"); if (hero && !hero.querySelector(".fp-sched")) { const wrap = document.createElement("div"); wrap.className = "fp-sched"; hero.appendChild(wrap); ReactDOM.render(fpEl, wrap); } }, 100);
+})();
 })(),
 isAdmin && (React.createElement("div", { style: { background: "var(--admin-card-bg)", border: `1.5px solid ${posKosong ? "#ff3333" : "var(--border)"}`, borderRadius: 12, padding: "14px 16px", marginBottom: 14 } },
 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 } },
@@ -4491,15 +4514,15 @@ setLiburData(Object.assign(Object.assign({}, liburData), { [todayKey]: next }));
 };
 const REGU_COLS = { 1: "var(--accent)", 2: "var(--ok)", 3: "#a78bfa" };
 return (React.createElement(React.Fragment, null,
-React.createElement("div", { onClick: () => setOpen(true), style: { background: "linear-gradient(135deg,#fef3c7,#fde68a)", border: "1.5px solid #fbbf24", borderRadius: 12, padding: "12px 14px", marginBottom: 14, cursor: "pointer" }, onClick: () => openModal() },
+React.createElement("div", { onClick: () => setOpen(true), style: { background: "var(--card-solid)", border: "1.5px solid rgba(251,191,36,.30)", borderRadius: 12, padding: "12px 14px", marginBottom: 14, cursor: "pointer" }, onClick: () => openModal() },
 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
-React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: "#ffcc00", marginBottom: 4 } },
+React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: "#f59e0b", marginBottom: 4 } },
 "\uD83C\uDF34 Hari Libur ",
 jenis),
-React.createElement("span", { style: { fontSize: 10, color: "var(--tx3)", fontWeight: 700, background: "rgba(255,255,255,.5)", borderRadius: 6, padding: "2px 7px" } }, isAdmin ? "⚙ Setting" : "👁 Lihat")),
+React.createElement("span", { style: { fontSize: 10, color: "var(--tx3)", fontWeight: 700, background: "var(--card2)", borderRadius: 6, padding: "2px 7px" } }, isAdmin ? "⚙ Setting" : "👁 Lihat")),
 liburHariIni.length > 0 ? (React.createElement(React.Fragment, null,
-React.createElement("div", { style: { fontSize: 11, color: "#ffcc00", marginBottom: 6 } }, "Jatah libur ditetapkan untuk:"),
-React.createElement("div", { style: { display: "flex", gap: 7, flexWrap: "wrap" } }, liburHariIni.map(nm => (React.createElement("div", { key: nm, style: { background: "rgba(255,255,255,.65)", borderRadius: 8, padding: "4px 11px", fontSize: 12, fontWeight: 800, color: "#ffcc00" } },
+React.createElement("div", { style: { fontSize: 11, color: "var(--tx3)", marginBottom: 6 } }, "Jatah libur ditetapkan untuk:"),
+React.createElement("div", { style: { display: "flex", gap: 7, flexWrap: "wrap" } }, liburHariIni.map(nm => (React.createElement("div", { key: nm, style: { background: "rgba(251,191,36,.12)", borderRadius: 8, padding: "4px 11px", fontSize: 12, fontWeight: 800, color: "#f59e0b" } },
 "\uD83C\uDFD6 ",
 nm)))))) : (React.createElement("div", { style: { fontSize: 11, color: "var(--tx3)", marginTop: 2 } }, isAdmin ? "Tap untuk tetapkan siapa yang dapat jatah libur hari ini." : "Belum ada anggota yang ditetapkan libur hari ini."))),
 React.createElement(Modal, { open: open, onClose: () => { setOpen(false); setSelectedRegu(null); }, title: "🌴 Jatah Libur — " + (() => { const [y, m, d] = todayKey.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" }); })() },
@@ -6156,6 +6179,40 @@ localStorage.setItem("pad_notified_bc", bcKey);
 catch (_a) { }
 pushNotif.sendNotif("📢 Pesan dari Pimpinan", broadcast.pesan.slice(0, 120) + (broadcast.pesan.length > 120 ? "…" : ""), { tag: "broadcast", tab: "dashboard" });
 }, [broadcast, pushNotif.isEnabled]);
+useEffect(() => {
+if (!pushNotif.isEnabled) return;
+const SESI = [
+{ id: "s1", sH:6,  sM:0,  eH:8,  eM:0,  label: "Sesi 1 · Masuk (06:00–08:00)"     },
+{ id: "s2", sH:23, sM:0,  eH:23, eM:59, label: "Sesi 2 · Malam (23:00–23:59)"     },
+{ id: "s3", sH:0,  sM:1,  eH:3,  eM:0,  label: "Sesi 3 · Dini Hari (00:01–03:00)" },
+{ id: "s4", sH:6,  sM:0,  eH:8,  eM:0,  label: "Sesi 4 · Pulang (06:00–08:00)"    },
+];
+const fpSent = JSON.parse(localStorage.getItem("pad_fp_sent") || "{}");
+const check = () => {
+const n = new Date(), h = n.getHours(), m = n.getMinutes(), nowMin = h * 60 + m;
+const todayKey = n.toISOString().slice(0, 10);
+SESI.forEach(s => {
+const key = s.id + "_" + todayKey;
+if (nowMin >= s.sH*60+s.sM && nowMin <= s.eH*60+s.eM && !fpSent[key]) {
+fpSent[key] = 1;
+try { localStorage.setItem("pad_fp_sent", JSON.stringify(fpSent)); } catch(_) {}
+pushNotif.sendNotif("\uD83D\uDC46 Waktunya Finger Print!", s.label + " \u2014 Segera lakukan absensi.", { tag: "fp-" + key, vibrate: [300,100,300] });
+}
+});
+if (h === 20 && m <= 4) {
+const lk = "libur_remind_" + todayKey;
+const liburHariIni = (liburData && liburData[todayKey]) || [];
+if (liburHariIni.length > 0 && !fpSent[lk]) {
+fpSent[lk] = 1;
+try { localStorage.setItem("pad_fp_sent", JSON.stringify(fpSent)); } catch(_) {}
+pushNotif.sendNotif("\uD83C\uDF05 Pengingat: Besok Masuk Kerja!", liburHariIni.join(", ") + " \u2014 Libur hari ini berakhir. Besok kembali piket!", { tag: "libur-" + todayKey, vibrate: [200,100,200] });
+}
+}
+};
+check();
+const id = setInterval(check, 30000);
+return () => clearInterval(id);
+}, [pushNotif.isEnabled, liburData]);
 const toast = (msg, ok = true) => { setNotif({ msg, ok }); setTimeout(() => setNotif(null), 3000); };
 const handleLogin = (user) => {
 setCurrentUser(user);
